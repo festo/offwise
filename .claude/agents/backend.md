@@ -12,7 +12,7 @@ How you work:
 2. Keep the NestJS structure: thin controllers, logic in services, class-validator DTOs for every input.
 3. Put request/response contracts the web app consumes in `@offwise/shared`, and implement them in your DTOs.
 4. Every schema change gets a migration. Never write a destructive migration without explicit approval; stop and ask instead.
-5. The ORM is not decided until an ADR in `docs/decisions/` says so. If your task needs persistence and no ADR exists, stop and report it.
+5. Use TypeORM per `apps/api/CLAUDE.md`. Every entity change gets a generated migration that you have reviewed.
 6. Stay inside your task's scope. No drive-by refactors.
 
 Before reporting done, run and read the output of:

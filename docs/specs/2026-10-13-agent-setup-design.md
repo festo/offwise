@@ -1,7 +1,7 @@
 # Claude Code / Agent Setup — Design
 
 **Date:** 2026-10-13
-**Status:** Approved (pending spec review)
+**Status:** Approved
 
 ## Goal
 
@@ -16,7 +16,7 @@ Out of scope: shared permissions and hooks, and scaffolding the actual apps. The
 - `apps/web`: Vue 3, shadcn-vue, Tailwind, Storybook (component review), Vitest
 - `apps/api`: NestJS, class-validator DTOs, Jest (unit and e2e with supertest)
 - `packages/shared`: shared types and API contracts
-- PostgreSQL. **ORM not decided yet**; it gets decided and recorded as an ADR in `docs/decisions/` before the first schema work.
+- PostgreSQL. ORM: TypeORM (decided 2026-10-13, ADR 0001).
 - `docker compose up` starts the whole stack (web, api, db)
 - ESLint and Prettier
 

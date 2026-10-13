@@ -15,7 +15,7 @@ docs/plans/        Impl. plans      YYYY-MM-DD-<topic>-plan.md
 docs/decisions/    ADRs             NNNN-<title>.md (see docs/decisions/README.md)
 ```
 
-TypeScript everywhere. ESLint and Prettier. The ORM is not decided yet; see `docs/decisions/`, and do not pick one without an ADR.
+TypeScript everywhere. ESLint and Prettier. ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
 
 ## Commands (once scaffolded)
 

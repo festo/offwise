@@ -4,7 +4,7 @@ NestJS REST API for offwise, backed by PostgreSQL. Read the root `CLAUDE.md` fir
 
 ## Stack
 
-NestJS, TypeScript, PostgreSQL, class-validator / class-transformer, Jest + supertest. ORM: **not decided yet**. Check `docs/decisions/` and don't introduce one without an ADR.
+NestJS, TypeScript, PostgreSQL, class-validator / class-transformer, Jest + supertest. ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
 
 ## Commands (once scaffolded)
 
@@ -15,6 +15,8 @@ pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
 pnpm --filter @offwise/api test         # unit
 pnpm --filter @offwise/api test:e2e     # e2e against postgres
+pnpm --filter @offwise/api migration:generate   # generate a migration from entity changes
+pnpm --filter @offwise/api migration:run        # apply migrations
 ```
 
 ## Conventions
@@ -29,6 +31,10 @@ pnpm --filter @offwise/api test:e2e     # e2e against postgres
 
 ## Database
 
+- TypeORM through `@nestjs/typeorm`. Entities live in `src/<area>/entities/<name>.entity.ts`.
+- Migrations are generated and run with the TypeORM CLI against a single data-source file (`src/data-source.ts`) and stored in `src/migrations/`.
+- `synchronize: false` always.
+- Leave dates use `type: 'date'` columns (they come back as `YYYY-MM-DD` strings), never `timestamp`.
 - Every schema change ships with a migration in the same PR.
 - No destructive migration (drop or rename of a column or table, data rewrite) without explicit human approval in the PR.
 

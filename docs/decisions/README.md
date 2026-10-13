@@ -3,7 +3,7 @@
 Short records of decisions that shape the stack or architecture (e.g. choice of ORM, auth approach).
 
 - File name: `NNNN-<kebab-title>.md`, numbered sequentially (`0001-...`).
-- Never edit an accepted ADR's decision; supersede it with a new ADR and mark the old one `Superseded by NNNN`.
+- Never edit an accepted ADR's decision; supersede it with a new ADR and mark the old one `Superseded by NNNN`. The new ADR states `Supersedes NNNN`.
 
 ## Template
 
@@ -23,4 +23,4 @@ Short records of decisions that shape the stack or architecture (e.g. choice of 
 
 ## Open decisions
 
-- ORM for PostgreSQL: decide before the first schema work.
+- None currently.
