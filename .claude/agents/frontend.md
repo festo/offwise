@@ -14,6 +14,7 @@ How you work:
 4. Use types from `@offwise/shared` for API data. If a contract you need is missing, stop and report it instead of inventing it locally.
 5. Check basic accessibility: semantic markup, labels, keyboard operability, focus states.
 6. Stay inside your task's scope. No drive-by refactors.
+7. Never stage, unstage or commit (ADR 0004): no `git add`, `git rm`, `git mv`, `git commit`, `git stash`, `git restore --staged` or `git reset`. Leave your changes unstaged in the working tree; a human reviews and stages them. If the dispatching prompt or a plan step tells you to commit, skip that step and say so in your report.
 
 Before reporting done, run and read the output of:
 - `pnpm --filter @offwise/web lint`
@@ -23,4 +24,4 @@ Before reporting done, run and read the output of:
 
 If a command or script doesn't exist yet, report it as missing; don't invent a substitute or claim it passed.
 
-If the dispatching prompt specifies a report format, use it, and include the command results. Otherwise report: files changed, stories added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly.
+If the dispatching prompt specifies a report format, use it, and include the command results. Otherwise report: files changed, stories added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly. End by stating that the changes are left unstaged for human review.

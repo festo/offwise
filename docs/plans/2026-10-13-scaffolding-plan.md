@@ -4,19 +4,21 @@
 
 **Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install-step runner and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and `docker compose up` running the whole stack.
 
-**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with class-validator at startup, shares one TypeORM options builder between Nest and the TypeORM CLI, runs migrations and then pending install steps on boot. The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0003.
+**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with class-validator at startup, shares one TypeORM options builder between Nest and the TypeORM CLI, never runs migrations itself (it refuses to start while migrations are pending), and runs pending install steps on boot. The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0003.
 
 **Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Jest 29 + supertest, Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
 
 ## Global Constraints
 
 - Work on branch `feat/scaffolding`. Never commit to `main`.
+- ADR 0004: implementers never stage, unstage or commit. Each task ends by handing an unstaged working tree to a human; the coordinating session commits only what the human has staged.
 - End every commit message with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (after a blank line).
 - Every workspace defines `lint`, `typecheck`, `test`, `format`. The api also defines `test:e2e`, `migration:generate`, `migration:run`. The web app also defines `storybook`, `build-storybook`.
 - The compose service for PostgreSQL is named `db`.
 - Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>`). The root holds repo tooling only (`prettier`, `typescript`).
 - Module 0 env vars only: `NODE_ENV`, `PORT` (default 3000), `LOG_LEVEL` (default `info`), `DATABASE_URL`. Validated at startup; invalid config stops the process. Documented in `apps/api/.env.example`.
-- TypeORM: `synchronize: false` always; data source file is `apps/api/src/data-source.ts`; migrations live in `apps/api/src/migrations/`; Nest and the CLI share one options builder.
+- The API never runs migrations automatically. Migrations run only through an explicit command: `migration:run` (dev, TypeScript) or `migration:run:dist` / `docker compose run --rm migrate` (built code). On startup the API checks for pending migrations and refuses to start if there are any.
+- TypeORM: `synchronize: false` always; `migrationsRun` is never set; data source file is `apps/api/src/data-source.ts`; migrations live in `apps/api/src/migrations/`; Nest and the CLI share one options builder.
 - The web app has no runtime env; it calls `/api` on its own origin.
 - Workspace `format` scripts run Prettier from the workspace directory, so they pass the root `.gitignore` and `.prettierignore` explicitly with `--ignore-path`.
 - vue-i18n is wired with English only; every user-visible string goes through `t()`.
@@ -49,10 +51,12 @@ apps/api/
   src/config/log-levels.ts          LOG_LEVEL → Nest logger levels
   src/database/typeorm-options.ts   buildDataSourceOptions() — the one options object
   src/database/entities.ts          explicit entity list
-  src/database/database.module.ts   TypeOrmModule.forRootAsync
+  src/database/database.module.ts   TypeOrmModule.forRootAsync + pending-migration check on init
+  src/database/pending-migrations.ts findPendingMigrations()
   src/migrations/index.ts           explicit migration list
   src/migrations/1760313600000-CreateInstallSteps.ts
   src/data-source.ts                TypeORM CLI data source
+  src/migrate.ts                    explicit migration command for built code (containers)
   src/health/                       GET /api/health
   src/install/                      install-step contract, record entity, runner, registry, module
   test/                             e2e config, env, global setup, helpers, specs
@@ -282,10 +286,11 @@ pnpm -r lint && pnpm -r typecheck && pnpm -r test && pnpm format:check
 
 Expected: `dist` contains `index.js`, `index.d.ts`, `api.js`, `health.js`; all four commands exit 0 (vitest prints "No test files found, exiting with code 0"). If `format:check` fails, run `pnpm prettier --write .` once and re-check.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json .prettierrc .prettierignore .editorconfig .nvmrc packages/shared
 git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -595,10 +600,11 @@ pnpm --filter @offwise/api build && (cd apps/api && NODE_ENV=development PORT=39
 
 Expected: lint and typecheck exit 0. The first boot logs `Nest application successfully started`. The second (no `NODE_ENV`) exits with `Invalid environment configuration: NODE_ENV: ...`. On macOS without `timeout`, start it, look for the log line, and stop it with Ctrl+C.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add apps/api pnpm-lock.yaml
 git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -609,10 +615,10 @@ git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authore
 **Files:**
 - Create: `docker-compose.yml`, `docker/postgres/init/01-create-test-db.sql`, `apps/api/.env.example`
 - Modify: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/app.module.ts`, `apps/api/package.json`
-- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`
+- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
 - Create: `apps/api/src/health/health.service.ts`, `apps/api/src/health/health.controller.ts`, `apps/api/src/health/health.module.ts`
 - Create: `apps/api/test/jest-e2e.json`, `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
-- Test: `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`
+- Test: `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`
 
 **Interfaces:**
 - Consumes: `validateEnv`, `configureApp`, `AppModule` (Task 2); `HealthResponse` (Task 1).
@@ -620,7 +626,9 @@ git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authore
   - `EnvironmentVariables.DATABASE_URL: string`
   - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions`
   - `entities: DataSourceOptions['entities']` (array) in `src/database/entities.ts`; `migrations: DataSourceOptions['migrations']` (array) in `src/migrations/index.ts`
-  - `DatabaseModule`, `HealthModule`, `HealthService.check(): Promise<HealthResponse>`
+  - `findPendingMigrations(dataSource: DataSource): Promise<string[]>` — names of known migrations not yet applied
+  - `DatabaseModule` — throws on module init if migrations are pending
+  - `HealthModule`, `HealthService.check(): Promise<HealthResponse>`
   - Test helpers: `createTestApp(): Promise<INestApplication>`, `resetDatabase(dataSource: DataSource): Promise<void>`, `applyTestEnv(): void`, `TEST_DATABASE_URL`
 
 - [ ] **Step 1: Postgres for dev and e2e**
@@ -745,7 +753,7 @@ export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
     entities,
     migrations,
     migrationsTableName: 'migrations',
-    migrationsRun: true,
+    // Never migrate on startup; migrations run only through an explicit command.
     synchronize: false,
   };
 }
@@ -790,13 +798,41 @@ Add to `apps/api/package.json` `scripts`:
     "test:e2e": "jest --config test/jest-e2e.json --runInBand",
     "migration:generate": "sh -c 'typeorm-ts-node-commonjs -d src/data-source.ts migration:generate src/migrations/$0'",
     "migration:run": "typeorm-ts-node-commonjs -d src/data-source.ts migration:run",
-    "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert"
+    "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert",
+    "migration:run:dist": "node dist/migrate.js"
+```
+
+`apps/api/src/migrate.ts` (the explicit migration command for built code, used by containers):
+
+```ts
+import 'reflect-metadata';
+import 'dotenv/config';
+import dataSource from './data-source';
+
+async function migrate(): Promise<void> {
+  await dataSource.initialize();
+  try {
+    const applied = await dataSource.runMigrations({ transaction: 'each' });
+    console.log(
+      applied.length === 0
+        ? 'No pending migrations.'
+        : `Applied migrations: ${applied.map((migration) => migration.name).join(', ')}`,
+    );
+  } finally {
+    await dataSource.destroy();
+  }
+}
+
+migrate().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});
 ```
 
 (`sh -c '...' Name` binds the name argument pnpm appends to `$0`, so `pnpm --filter @offwise/api migration:generate AddUsers` writes `src/migrations/<timestamp>-AddUsers.ts`.)
 
 Verify: `pnpm --filter @offwise/api migration:run`
-Expected: `No migrations are pending` (and the `migrations` table now exists in `offwise`).
+Expected: `No migrations are pending` (and the `migrations` table now exists in `offwise`). This command is the only way migrations run in development.
 
 - [ ] **Step 5: Failing unit test for HealthService**
 
@@ -1027,6 +1063,116 @@ describe('GET /api/health (e2e)', () => {
 
 To see the e2e test fail first, temporarily remove `HealthModule` from `AppModule` imports and run `pnpm --filter @offwise/api test:e2e` — Expected: FAIL with `expected 200 "OK", got 404 "Not Found"`. Restore the import.
 
+Next, the startup check for pending migrations. `apps/api/test/pending-migrations.e2e-spec.ts`:
+
+```ts
+import 'reflect-metadata';
+import { DataSource, type MigrationInterface } from 'typeorm';
+import { buildDataSourceOptions } from '../src/database/typeorm-options';
+import { findPendingMigrations } from '../src/database/pending-migrations';
+import { TEST_DATABASE_URL } from './test-env';
+
+class NotYetApplied9999999999999 implements MigrationInterface {
+  name = 'NotYetApplied9999999999999';
+  async up(): Promise<void> {}
+  async down(): Promise<void> {}
+}
+
+async function withDataSource<T>(
+  extraMigrations: (new () => MigrationInterface)[],
+  fn: (dataSource: DataSource) => Promise<T>,
+): Promise<T> {
+  const options = buildDataSourceOptions(TEST_DATABASE_URL);
+  const known = (options.migrations ?? []) as (new () => MigrationInterface)[];
+  const dataSource = new DataSource({ ...options, migrations: [...known, ...extraMigrations] });
+  await dataSource.initialize();
+  try {
+    return await fn(dataSource);
+  } finally {
+    await dataSource.destroy();
+  }
+}
+
+describe('findPendingMigrations (e2e)', () => {
+  it('returns nothing for a fully migrated database', async () => {
+    await expect(withDataSource([], findPendingMigrations)).resolves.toEqual([]);
+  });
+
+  it('returns migrations that have not been applied, without applying them', async () => {
+    await withDataSource([NotYetApplied9999999999999], async (dataSource) => {
+      await expect(findPendingMigrations(dataSource)).resolves.toEqual([
+        'NotYetApplied9999999999999',
+      ]);
+      await expect(findPendingMigrations(dataSource)).resolves.toEqual([
+        'NotYetApplied9999999999999',
+      ]);
+    });
+  });
+});
+```
+
+Run: `pnpm --filter @offwise/api test:e2e`
+Expected: FAIL — `Cannot find module '../src/database/pending-migrations'`.
+
+`apps/api/src/database/pending-migrations.ts`:
+
+```ts
+import type { DataSource } from 'typeorm';
+
+/** Names of known migrations not yet recorded in the migrations table. Read-only: never migrates. */
+export async function findPendingMigrations(dataSource: DataSource): Promise<string[]> {
+  const known = dataSource.migrations.map((migration) => migration.name ?? migration.constructor.name);
+  const table = dataSource.options.migrationsTableName ?? 'migrations';
+  const queryRunner = dataSource.createQueryRunner();
+  try {
+    if (!(await queryRunner.hasTable(table))) {
+      return known;
+    }
+    const rows: { name: string }[] = await queryRunner.query(`SELECT "name" FROM "${table}"`);
+    const executed = new Set(rows.map((row) => row.name));
+    return known.filter((name) => !executed.has(name));
+  } finally {
+    await queryRunner.release();
+  }
+}
+```
+
+Wire it into `apps/api/src/database/database.module.ts` (replace the file). `onModuleInit` runs before any module's `onApplicationBootstrap`, so install steps never run on an outdated schema:
+
+```ts
+import { Module, type OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import type { EnvironmentVariables } from '../config/env.validation';
+import { findPendingMigrations } from './pending-migrations';
+import { buildDataSourceOptions } from './typeorm-options';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<EnvironmentVariables, true>) =>
+        buildDataSourceOptions(config.get('DATABASE_URL', { infer: true })),
+    }),
+  ],
+})
+export class DatabaseModule implements OnModuleInit {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async onModuleInit(): Promise<void> {
+    const pending = await findPendingMigrations(this.dataSource);
+    if (pending.length > 0) {
+      throw new Error(
+        `Database has ${pending.length} pending migration(s): ${pending.join(', ')}. ` +
+          'The API does not migrate automatically. Run `pnpm --filter @offwise/api migration:run` ' +
+          '(development) or `docker compose run --rm migrate` (containers), then start the API again.',
+      );
+    }
+  }
+}
+```
+
 - [ ] **Step 8: Run everything**
 
 ```bash
@@ -1037,12 +1183,13 @@ pnpm --filter @offwise/api typecheck
 pnpm --filter @offwise/api start:dev   # in another terminal: curl -s localhost:3000/api/health
 ```
 
-Expected: e2e PASS (1 test); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
+Expected: e2e PASS (3 tests); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add docker-compose.yml docker apps/api pnpm-lock.yaml
 git commit -m "feat(api): add TypeORM, migrations, e2e harness and health endpoint" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -1144,7 +1291,9 @@ pnpm --filter @offwise/api migration:run
 pnpm --filter @offwise/api migration:generate Check
 ```
 
-Expected: the first applies `CreateInstallSteps1760313600000`; the second prints `No changes in database schema were found` and creates no file. If it does generate a file, the hand-written migration and entity disagree: delete the generated file, fix the migration to match its SQL, and repeat.
+Before these two commands, start the API once (`pnpm --filter @offwise/api start:dev`). Expected: it stops with `Database has 1 pending migration(s): CreateInstallSteps1760313600000 ...`, which shows the startup check working.
+
+Expected for the two commands: the first applies `CreateInstallSteps1760313600000`; the second prints `No changes in database schema were found` and creates no file. If it does generate a file, the hand-written migration and entity disagree: delete the generated file, fix the migration to match its SQL, and repeat.
 
 - [ ] **Step 2: Failing unit test for duplicate names**
 
@@ -1353,22 +1502,23 @@ pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
 ```
 
-Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health + 3 install-step tests); lint/typecheck exit 0.
+Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health, 2 pending-migration and 3 install-step tests); lint/typecheck exit 0.
 
 - [ ] **Step 5: Document the conventions in `apps/api/CLAUDE.md`**
 
 In the `## Database` section, add these bullets after the `migration:run` line:
 
 ```markdown
-- Entities and migrations are listed explicitly: register every new entity in `src/database/entities.ts` and every new migration class in `src/migrations/index.ts` (oldest first). The API runs pending migrations on startup.
+- Entities and migrations are listed explicitly: register every new entity in `src/database/entities.ts` and every new migration class in `src/migrations/index.ts` (oldest first). The API never runs migrations itself and refuses to start while any are pending; run `migration:run` (dev) or `docker compose run --rm migrate` (containers).
 - Defaults a module seeds once per installation are install steps (ADR 0003): implement `InstallStep` from `src/install/install-step.ts` next to the module and append it to `src/install/install-steps.registry.ts`. Step names are permanent.
 - E2E tests run against the `offwise_test` database (created by `docker/postgres/init`); use `createTestApp()` and `resetDatabase()` from `test/utils/`.
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add apps/api pnpm-lock.yaml
 git commit -m "feat(api): add once-per-installation install-step runner" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -1828,10 +1978,11 @@ Expected: tests PASS (2 + 4 + 3); lint, typecheck and build exit 0.
 
 With `docker compose up -d db` and `pnpm --filter @offwise/api start:dev` running, run `pnpm --filter @offwise/web dev` and open http://localhost:5173. Expected: "offwise", the tagline, and a badge reading "API connected". Stop the API and reload: the badge reads "API unavailable".
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add apps/web pnpm-lock.yaml
 git commit -m "feat(web): scaffold Vue app with Tailwind, shadcn-vue, i18n and API status" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -1927,10 +2078,11 @@ pnpm --filter @offwise/web test
 
 Expected: `build-storybook` writes `apps/web/storybook-static` and exits 0; the rest exit 0. Optionally run `pnpm --filter @offwise/web storybook` and check that the three ApiStatus stories render with the theme colours and English text.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add apps/web pnpm-lock.yaml
 git commit -m "feat(web): add Storybook with ApiStatus stories" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -2051,6 +2203,21 @@ services:
       - '8025:8025' # web UI
       - '1025:1025' # SMTP
 
+  # One-shot migration command; never started by `docker compose up`.
+  # Run explicitly: docker compose run --rm migrate
+  migrate:
+    profiles: ['migrate']
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ['node', 'dist/migrate.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -2082,7 +2249,12 @@ volumes:
 - [ ] **Step 3: Verify the stack**
 
 ```bash
-docker compose up --build -d
+docker compose down -v
+docker compose build
+docker compose up -d
+docker compose logs api | grep "pending migration"
+docker compose run --rm migrate
+docker compose up -d
 docker compose logs api | grep -E "Nest application successfully started|Error"
 curl -s http://localhost:8080/api/health
 curl -s http://localhost:8080/ | grep -o '<title>offwise</title>'
@@ -2090,7 +2262,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8025
 docker compose exec db psql -U offwise -d offwise -c '\dt'
 ```
 
-Expected: the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations` (the API ran migrations on startup). Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
+Expected: on the first `up` the api container exits with `Database has 1 pending migration(s)` (the API does not migrate itself); `migrate` prints `Applied migrations: CreateInstallSteps1760313600000`; after the second `up` the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations`. Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
 
 If the API image fails at `deploy` because `dist` is missing from `/out`, check `"files": ["dist"]` in both `apps/api/package.json` and `packages/shared/package.json`.
 
@@ -2106,7 +2278,9 @@ Time off, made simple. A self-hostable leave management app.
 ## Run the whole stack
 
 ```bash
-docker compose up --build
+docker compose build
+docker compose run --rm migrate    # migrations never run automatically; repeat after every upgrade
+docker compose up
 ```
 
 - App: http://localhost:8080
@@ -2121,6 +2295,7 @@ Requires Node 24 and pnpm 10 (`corepack enable`).
 pnpm install                                  # also builds @offwise/shared
 docker compose up -d db mailpit
 cp apps/api/.env.example apps/api/.env
+pnpm --filter @offwise/api migration:run      # the API refuses to start with pending migrations
 pnpm --filter @offwise/api start:dev          # http://localhost:3000/api
 pnpm --filter @offwise/web dev                # http://localhost:5173 (proxies /api)
 ```
@@ -2154,10 +2329,11 @@ pnpm format:check
 
 Expected: every command exits 0. If only `format:check` fails, run `pnpm -r format`, review the diff, and re-run. Read the output; report any failure instead of claiming success.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Hand over for human review (ADR 0004)**
+
+Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git add .dockerignore docker-compose.yml apps/api/Dockerfile apps/web/Dockerfile apps/web/nginx.conf README.md CLAUDE.md apps/api/CLAUDE.md apps/web/CLAUDE.md
 git commit -m "chore: run full stack with docker compose; document dev workflow" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -2170,7 +2346,7 @@ git commit -m "chore: run full stack with docker compose; document dev workflow"
 | pnpm workspaces, Nest and Vue apps, `@offwise/shared` | 1, 2, 5 |
 | docker compose with `db`, `api`, `web`, Mailpit | 3, 7 |
 | Env validation (`NODE_ENV`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`), `.env.example` | 2, 3 |
-| TypeORM data source and migrations, shared options | 3 |
+| TypeORM data source and migrations, shared options; no automatic migrations, startup refuses pending migrations | 3, 7 |
 | Install-step runner (`install_steps`, once per installation, after migrations) | 4 |
 | Health endpoint | 3 |
 | vue-i18n with English only | 5 |

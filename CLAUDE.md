@@ -38,7 +38,7 @@ Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>
 
 We use the Superpowers plugin plus two project agents. When you first open the repo in Claude Code and trust the folder, you'll be prompted to add the `superpowers-dev` marketplace and install the plugin; accept both.
 
-1. **Branch:** create the branch first (`feat/<topic>`, etc.). The spec, plan, and implementation commits all go on it. Brainstorming commits the spec, so it must not run on `main`.
+1. **Branch:** create the branch first (`feat/<topic>`, etc.). The spec, plan, and implementation commits all go on it, so brainstorming must not run on `main`.
 2. **Spec:** `superpowers:brainstorming` writes to `docs/specs/`. A human reviews it in a PR.
 3. **Plan:** `superpowers:writing-plans` writes to `docs/plans/`.
 4. **Implement:** on the feature branch, using `superpowers:subagent-driven-development` with TDD (`superpowers:test-driven-development`).
@@ -48,11 +48,14 @@ We use the Superpowers plugin plus two project agents. When you first open the r
    - When `superpowers:subagent-driven-development` dispatches an implementer, use the `frontend` subagent type for `apps/web` tasks and `backend` for `apps/api` and `packages/shared` tasks, instead of general-purpose. Keep the skill's prompt and report format.
 5. **Verify and review:** `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`, then a PR to `main`.
 
+**Every commit point is a human review gate (ADR 0004).** Wherever a Superpowers skill or a plan says to commit (spec, plan, each implementation task), the agent instead stops, leaves the changes unstaged, and reports the changed files and verification results. A human reviews the diff and stages what they accept; only then may the agent run `git commit` on exactly what is staged. Subagent implementers never commit; the coordinating session waits for the human before committing and before dispatching the next task.
+
 These paths override the Superpowers defaults: specs go in `docs/specs/` and plans in `docs/plans/`, **not** `docs/superpowers/...`.
 
 ## Team rules
 
 - Never commit directly to `main`. Branch (`feat/…`, `fix/…`, `chore/…`), then open a PR.
+- Agents never stage or unstage files (no `git add`, `git rm`, `git mv`, `git commit -a` or `git commit <paths>`, `git stash`, `git restore --staged`, `git reset`). A human stages after reviewing; agents commit only what is already staged. Agents may push feature branches and open PRs, but never merge, enable auto-merge or force-push; merging into `main` needs a human approving review (ADR 0004).
 - Decisions that change the stack or architecture get an ADR in `docs/decisions/`.
 - Don't claim something works without running the relevant lint, typecheck, and tests and reading their output.
 - Leave domain logic (balances, accrual, approvals, holidays) in the API; the web app displays and submits, it does not compute entitlements.

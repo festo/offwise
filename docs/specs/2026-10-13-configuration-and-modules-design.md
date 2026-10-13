@@ -80,7 +80,7 @@ Modules ship one at a time, so a single "installed" marker would miss the defaul
 
 - Each module registers named install steps, e.g. `org.root-team`.
 - Each step that has run is recorded in an `install_steps` table (name, applied at).
-- On startup, after migrations, the runner executes every unrecorded step in registration order. Each step runs in its own transaction together with its record row.
+- Migrations never run automatically. An operator runs them with an explicit command (`migration:run` in development, `docker compose run --rm migrate` for containers). On startup the API refuses to start while migrations are pending, then the runner executes every unrecorded step in registration order. Each step runs in its own transaction together with its record row.
 - A step runs **exactly once per installation**. An existing installation that upgrades to a new module gets that module's defaults once. Defaults an admin later edits or deletes are never recreated.
 - Steps live in typed TypeScript files next to their module and are unit-tested.
 
@@ -115,7 +115,7 @@ Every module is a complete vertical slice: API, web UI including admin screens, 
 
 | # | Module | Scope | Depends on |
 | --- | --- | --- | --- |
-| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; docker compose (`db`, `api`, `web`, Mailpit); env validation; TypeORM data source and migrations; install-step runner; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
+| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; docker compose (`db`, `api`, `web`, Mailpit); env validation; TypeORM data source and migrations (explicit command only; the API refuses to start with pending migrations); install-step runner; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
 | 1 | Identity & login | Users (name, email, role, language, time zone, status); password hashing; server-side sessions; login and logout; password reset by email; first-admin bootstrap; settings infrastructure; audit log foundation (append-only, used by every later module); admin user management (add, edit, close, set role); private-page shell in the web app. Temporary authorization: "signed in" and "is admin" only | 0 |
 | 2 | Org structure | Team tree; team managers, who may belong to a different team; membership with history, so moves keep history; manager-chain resolution; `org.root-team` step; admin UI for the tree | 1 |
 | 3 | Access control | Roles (Employee, Manager, HR/Admin, Auditor) mapped to permissions with scopes (own, managed subtree, company); Auditor read-only; replaces the temporary guards from module 1; route and menu guards in the web app | 2 |
