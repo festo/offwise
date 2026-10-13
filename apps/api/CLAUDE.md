@@ -15,7 +15,7 @@ pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
 pnpm --filter @offwise/api test         # unit
 pnpm --filter @offwise/api test:e2e     # e2e against postgres
-pnpm --filter @offwise/api migration:generate   # generate a migration from entity changes
+pnpm --filter @offwise/api migration:generate <Name>   # generate a migration from entity changes
 pnpm --filter @offwise/api migration:run        # apply migrations
 ```
 
@@ -33,6 +33,8 @@ pnpm --filter @offwise/api migration:run        # apply migrations
 
 - TypeORM through `@nestjs/typeorm`. Entities live in `src/<area>/entities/<name>.entity.ts`.
 - Migrations are generated and run with the TypeORM CLI against a single data-source file (`src/data-source.ts`) and stored in `src/migrations/`.
+  `migration:generate` wraps `typeorm migration:generate -d src/data-source.ts src/migrations/<Name>`; `migration:run` wraps `typeorm migration:run -d src/data-source.ts` (TypeScript data source run via ts-node/tsx).
+- `TypeOrmModule` and `src/data-source.ts` share one options object, so entities, migrations, and connection settings never drift.
 - `synchronize: false` always.
 - Leave dates use `type: 'date'` columns (they come back as `YYYY-MM-DD` strings), never `timestamp`.
 - Every schema change ships with a migration in the same PR.

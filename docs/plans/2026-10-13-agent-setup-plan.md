@@ -1,5 +1,7 @@
 # Claude Code / Agent Setup Implementation Plan
 
+> **Historical (completed 2026-10-13).** The ORM constraint below is superseded: TypeORM was chosen in `docs/decisions/0001-use-typeorm.md`. Do not re-execute.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Commit the shared Claude Code setup for offwise: project memory (CLAUDE.md files), shared settings that enable Superpowers, `frontend` and `backend` subagents, and the docs folder structure.
