@@ -15,6 +15,20 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    projects: [{ extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } }],
+    // The e2e project shares one test database, so test files run one at a time
+    // (not configurable per project in vitest 3).
+    fileParallelism: false,
+    projects: [
+      { extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } },
+      {
+        extends: true,
+        test: {
+          name: 'e2e',
+          include: ['test/**/*.e2e-spec.ts'],
+          setupFiles: ['test/setup-env.ts'],
+          globalSetup: ['test/global-setup.ts'],
+        },
+      },
+    ],
   },
 });

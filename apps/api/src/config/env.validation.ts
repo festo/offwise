@@ -7,6 +7,9 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(NODE_ENVS),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\/.+/, 'must be a postgres:// connection string'),
 });
 
 export type EnvironmentVariables = z.infer<typeof envSchema>;
