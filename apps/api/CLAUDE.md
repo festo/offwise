@@ -4,7 +4,7 @@ NestJS REST API for offwise, backed by PostgreSQL. Read the root `CLAUDE.md` fir
 
 ## Stack
 
-NestJS, TypeScript, PostgreSQL, class-validator / class-transformer, Jest + supertest. ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
+NestJS, TypeScript, PostgreSQL, class-validator / class-transformer (request DTOs), zod (env config), Vitest + supertest (see `docs/decisions/0005-vitest-and-zod.md`). ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
 
 ## Commands (once scaffolded)
 
@@ -27,7 +27,7 @@ pnpm --filter @offwise/api migration:run        # apply migrations
 - Request/response contracts consumed by the web app are defined in `@offwise/shared`, and the DTOs implement them.
 - The API owns all leave domain logic: balances, accrual, overlap checks, approvals, holidays. Dates are handled explicitly (date-only values for leave days, no accidental timezone shifts).
 - Errors use Nest's HTTP exceptions with clear messages; never leak stack traces or SQL.
-- Config comes from environment variables (validated at startup); no secrets in code. `.env*` files are gitignored.
+- Config comes from environment variables, validated at startup with the zod schema in `src/config/env.validation.ts`; no secrets in code. `.env*` files are gitignored.
 
 ## Database
 

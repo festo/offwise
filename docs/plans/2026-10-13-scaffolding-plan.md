@@ -6,7 +6,7 @@
 
 **Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with class-validator at startup, shares one TypeORM options builder between Nest and the TypeORM CLI, never runs migrations itself (it refuses to start while migrations are pending), and runs pending install steps on boot. The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0003.
 
-**Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Jest 29 + supertest, Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
+**Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Vitest 3 (API via unplugin-swc) + supertest, zod 4 (env validation), Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
 
 ## Global Constraints
 
@@ -16,6 +16,9 @@
 - Every workspace defines `lint`, `typecheck`, `test`, `format`. The api also defines `test:e2e`, `migration:generate`, `migration:run`. The web app also defines `storybook`, `build-storybook`.
 - The compose service for PostgreSQL is named `db`.
 - Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>`). The root holds repo tooling only (`prettier`, `typescript`).
+- Tests use Vitest everywhere (ADR 0005). The API compiles tests with SWC (`unplugin-swc`) because Nest dependency injection needs decorator metadata, which esbuild does not emit. Test files import `describe`/`it`/`expect`/`vi` from `vitest` explicitly (no globals).
+- Env validation uses zod (ADR 0005); request DTOs keep class-validator.
+- Configs must be clean under TypeScript 6 (the editor's version): no `moduleResolution: node`/`node10`, no `baseUrl`, `rootDir` set wherever `outDir` is. ESLint configs use `defineConfig` from `eslint/config`, not the deprecated `tseslint.config()`.
 - Module 0 env vars only: `NODE_ENV`, `PORT` (default 3000), `LOG_LEVEL` (default `info`), `DATABASE_URL`. Validated at startup; invalid config stops the process. Documented in `apps/api/.env.example`.
 - The API never runs migrations automatically. Migrations run only through an explicit command: `migration:run` (dev, TypeScript) or `migration:run:dist` / `docker compose run --rm migrate` (built code). On startup the API checks for pending migrations and refuses to start if there are any.
 - TypeORM: `synchronize: false` always; `migrationsRun` is never set; data source file is `apps/api/src/data-source.ts`; migrations live in `apps/api/src/migrations/`; Nest and the CLI share one options builder.
@@ -47,7 +50,7 @@ apps/api/
   src/main.ts                       bootstrap (dotenv → validate env → Nest)
   src/app.module.ts                 root module
   src/app.setup.ts                  configureApp(): prefix + ValidationPipe (shared with e2e)
-  src/config/env.validation.ts      EnvironmentVariables + validateEnv()
+  src/config/env.validation.ts      zod envSchema, EnvironmentVariables + validateEnv()
   src/config/log-levels.ts          LOG_LEVEL → Nest logger levels
   src/database/typeorm-options.ts   buildDataSourceOptions() — the one options object
   src/database/entities.ts          explicit entity list
@@ -59,7 +62,8 @@ apps/api/
   src/migrate.ts                    explicit migration command for built code (containers)
   src/health/                       GET /api/health
   src/install/                      install-step contract, record entity, runner, registry, module
-  test/                             e2e config, env, global setup, helpers, specs
+  vitest.config.mts                 unit + e2e Vitest projects (SWC)
+  test/                             e2e env, global setup, helpers, specs
 
 apps/web/
   Dockerfile, nginx.conf, index.html, vite.config.ts, components.json
@@ -206,8 +210,8 @@ trim_trailing_whitespace = true
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "noEmit": true
   },
   "include": ["src"]
@@ -232,13 +236,14 @@ trim_trailing_whitespace = true
 
 ```js
 import js from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['dist', 'coverage'] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   prettier,
 );
 ```
@@ -299,19 +304,21 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
 ### Task 2: API skeleton with validated env
 
 **Files:**
-- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`, `apps/api/eslint.config.mjs`
+- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`, `apps/api/eslint.config.mjs`, `apps/api/vitest.config.mts`
 - Create: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/log-levels.ts`, `apps/api/src/app.module.ts`, `apps/api/src/app.setup.ts`, `apps/api/src/main.ts`
 - Test: `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/config/log-levels.spec.ts`
 
 **Interfaces:**
 - Consumes: `API_PREFIX` from `@offwise/shared`.
 - Produces:
-  - `enum NodeEnv`, `const LOG_LEVELS`, `type LogLevel = 'error' | 'warn' | 'info' | 'debug'`
-  - `class EnvironmentVariables { NODE_ENV: NodeEnv; PORT: number; LOG_LEVEL: LogLevel }` (Task 3 adds `DATABASE_URL: string`)
-  - `validateEnv(config: Record<string, unknown>): EnvironmentVariables` — throws `Error('Invalid environment configuration: ...')`
+  - `NODE_ENVS`, `LOG_LEVELS` (readonly tuples), `envSchema` (zod object; Task 3 adds `DATABASE_URL`)
+  - `type EnvironmentVariables = z.infer<typeof envSchema>` — `{ NODE_ENV: 'development' | 'test' | 'production'; PORT: number; LOG_LEVEL: LogLevel }`
+  - `type LogLevel = 'error' | 'warn' | 'info' | 'debug'`
+  - `validateEnv(config: Record<string, unknown>): EnvironmentVariables` — throws `Error('Invalid environment configuration: <path>: <message>; ...')`; unknown keys are dropped
   - `toNestLogLevels(level: LogLevel): NestLogLevel[]`
   - `configureApp(app: INestApplication): void` — sets the `api` prefix and the global `ValidationPipe`
   - `AppModule`
+  - `apps/api/vitest.config.mts` with a `unit` project (`src/**/*.spec.ts`); Task 3 adds an `e2e` project
 
 - [ ] **Step 1: Package and tooling files**
 
@@ -328,48 +335,46 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
     "start": "node dist/main.js",
     "start:dev": "pnpm --filter @offwise/shared build && nest start --watch",
     "lint": "eslint .",
-    "typecheck": "pnpm --filter @offwise/shared build && tsc --noEmit -p tsconfig.json",
-    "test": "jest",
+    "typecheck": "pnpm --filter @offwise/shared build && tsc -p tsconfig.json",
+    "test": "vitest run --project unit",
     "format": "prettier --write . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore"
-  },
-  "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": { "^.+\\.ts$": "ts-jest" },
-    "testEnvironment": "node",
-    "moduleNameMapper": { "^@offwise/shared$": "<rootDir>/../../../packages/shared/src" }
   }
 }
 ```
 
-`apps/api/tsconfig.json`:
+`apps/api/tsconfig.json` (typecheck only; never emits):
 
 ```json
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "outDir": "dist",
-    "types": ["node", "jest"]
+    "noEmit": true,
+    "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "vitest.config.mts"]
 }
 ```
 
-`apps/api/tsconfig.build.json`:
+`apps/api/tsconfig.build.json` (what `nest build` compiles):
 
 ```json
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": "src", "types": ["node"] },
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.spec.ts"]
 }
 ```
+
+The package has no `"type": "module"`, so `nodenext` compiles `src` to CommonJS (what Nest expects) and relative imports need no file extensions.
 
 `apps/api/nest-cli.json`:
 
@@ -386,37 +391,66 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
 
 ```js
 import js from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['dist', 'coverage'] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   prettier,
-  { languageOptions: { globals: { ...globals.node, ...globals.jest } } },
+  { languageOptions: { globals: globals.node } },
 );
+```
+
+`apps/api/vitest.config.mts`:
+
+```ts
+import { fileURLToPath, URL } from 'node:url';
+import swc from 'unplugin-swc';
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  // SWC instead of esbuild: Nest dependency injection needs emitDecoratorMetadata.
+  plugins: [swc.vite({ module: { type: 'es6' } })],
+  resolve: {
+    alias: {
+      // Tests use the shared source, so they never depend on a stale packages/shared/dist.
+      '@offwise/shared': fileURLToPath(
+        new URL('../../packages/shared/src/index.ts', import.meta.url),
+      ),
+    },
+  },
+  test: {
+    environment: 'node',
+    projects: [{ extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } }],
+  },
+});
 ```
 
 Install:
 
 ```bash
-pnpm --filter @offwise/api add @offwise/shared@workspace:* @nestjs/common@^11 @nestjs/core@^11 @nestjs/platform-express@^11 @nestjs/config@^4 class-validator class-transformer reflect-metadata rxjs dotenv
-pnpm --filter @offwise/api add -D @nestjs/cli@^11 @nestjs/schematics@^11 @nestjs/testing@^11 typescript@~5.9 @types/node@^24 jest@^29 ts-jest@^29 @types/jest@^29 supertest @types/supertest eslint@^9 @eslint/js@^9 typescript-eslint@^8 eslint-config-prettier@^10 globals
+pnpm --filter @offwise/api add @offwise/shared@workspace:* @nestjs/common@^11 @nestjs/core@^11 @nestjs/platform-express@^11 @nestjs/config@^4 class-validator class-transformer reflect-metadata rxjs dotenv zod@^4
+pnpm --filter @offwise/api add -D @nestjs/cli@^11 @nestjs/schematics@^11 @nestjs/testing@^11 typescript@~5.9 @types/node@^24 vitest@^3.2 unplugin-swc @swc/core supertest @types/supertest eslint@^9 @eslint/js@^9 typescript-eslint@^8 eslint-config-prettier@^10 globals
 ```
+
+(`class-validator`/`class-transformer` are for request DTOs and the global `ValidationPipe`, not for env.) If pnpm reports ignored build scripts for `@swc/core`, check `pnpm --filter @offwise/api test` still runs; SWC ships its binary as an optional dependency.
 
 - [ ] **Step 2: Write the failing tests**
 
 `apps/api/src/config/env.validation.spec.ts`:
 
 ```ts
-import { NodeEnv, validateEnv } from './env.validation';
+import { describe, expect, it } from 'vitest';
+import { validateEnv } from './env.validation';
 
 describe('validateEnv', () => {
   it('applies defaults for optional variables', () => {
     const env = validateEnv({ NODE_ENV: 'test' });
-    expect(env.NODE_ENV).toBe(NodeEnv.Test);
+    expect(env.NODE_ENV).toBe('test');
     expect(env.PORT).toBe(3000);
     expect(env.LOG_LEVEL).toBe('info');
   });
@@ -425,8 +459,12 @@ describe('validateEnv', () => {
     expect(validateEnv({ NODE_ENV: 'production', PORT: '8080' }).PORT).toBe(8080);
   });
 
-  it('rejects a missing NODE_ENV', () => {
-    expect(() => validateEnv({})).toThrow(/NODE_ENV/);
+  it('drops variables it does not know', () => {
+    expect(validateEnv({ NODE_ENV: 'test', PATH: '/usr/bin' })).not.toHaveProperty('PATH');
+  });
+
+  it('rejects a missing NODE_ENV with a prefixed message naming the variable', () => {
+    expect(() => validateEnv({})).toThrow(/^Invalid environment configuration: .*NODE_ENV/);
   });
 
   it('rejects an unknown LOG_LEVEL', () => {
@@ -442,15 +480,20 @@ describe('validateEnv', () => {
 `apps/api/src/config/log-levels.spec.ts`:
 
 ```ts
+import { describe, expect, it } from 'vitest';
 import { toNestLogLevels } from './log-levels';
 
 describe('toNestLogLevels', () => {
-  it('maps info to Nest "log" and everything more severe', () => {
-    expect(toNestLogLevels('info')).toEqual(['fatal', 'error', 'warn', 'log']);
-  });
-
   it('maps error to fatal and error only', () => {
     expect(toNestLogLevels('error')).toEqual(['fatal', 'error']);
+  });
+
+  it('maps warn to fatal, error and warn', () => {
+    expect(toNestLogLevels('warn')).toEqual(['fatal', 'error', 'warn']);
+  });
+
+  it('maps info to Nest "log" and everything more severe', () => {
+    expect(toNestLogLevels('info')).toEqual(['fatal', 'error', 'warn', 'log']);
   });
 
   it('includes debug but not verbose for debug', () => {
@@ -462,51 +505,37 @@ describe('toNestLogLevels', () => {
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `pnpm --filter @offwise/api test`
-Expected: FAIL — `Cannot find module './env.validation'` and `'./log-levels'`.
+Expected: FAIL — `./env.validation` and `./log-levels` cannot be resolved.
 
 - [ ] **Step 4: Implement**
 
 `apps/api/src/config/env.validation.ts`:
 
 ```ts
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, Max, Min, validateSync } from 'class-validator';
+import { z } from 'zod';
 
-export enum NodeEnv {
-  Development = 'development',
-  Test = 'test',
-  Production = 'production',
-}
-
+export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export const LOG_LEVELS = ['error', 'warn', 'info', 'debug'] as const;
-export type LogLevel = (typeof LOG_LEVELS)[number];
 
-export class EnvironmentVariables {
-  @IsEnum(NodeEnv)
-  NODE_ENV!: NodeEnv;
+export const envSchema = z.object({
+  NODE_ENV: z.enum(NODE_ENVS),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+});
 
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  PORT: number = 3000;
+export type EnvironmentVariables = z.infer<typeof envSchema>;
+export type LogLevel = EnvironmentVariables['LOG_LEVEL'];
 
-  @IsIn(LOG_LEVELS)
-  LOG_LEVEL: LogLevel = 'info';
-}
-
+/** Validates and normalises process.env-like input; unknown variables are dropped. */
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
-  const env = plainToInstance(EnvironmentVariables, config, {
-    enableImplicitConversion: true,
-    exposeDefaultValues: true,
-  });
-  const errors = validateSync(env);
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${error.property}: ${Object.values(error.constraints ?? {}).join(', ')}`)
+  const result = envSchema.safeParse(config);
+  if (!result.success) {
+    const details = result.error.issues
+      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
       .join('; ');
     throw new Error(`Invalid environment configuration: ${details}`);
   }
-  return env;
+  return result.data;
 }
 ```
 
@@ -574,6 +603,7 @@ import { validateEnv } from './config/env.validation';
 import { toNestLogLevels } from './config/log-levels';
 
 async function bootstrap(): Promise<void> {
+  // Validated here too (not only in ConfigModule) because PORT and LOG_LEVEL are needed before Nest starts.
   const env = validateEnv(process.env);
   const app = await NestFactory.create(AppModule, { logger: toNestLogLevels(env.LOG_LEVEL) });
   configureApp(app);
@@ -587,18 +617,19 @@ void bootstrap();
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm --filter @offwise/api test`
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests, no warnings in the output.
 
 - [ ] **Step 6: Verify lint, typecheck and boot**
 
 ```bash
 pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
-pnpm --filter @offwise/api build && (cd apps/api && NODE_ENV=development PORT=3999 timeout 5 node dist/main.js; true)
+pnpm --filter @offwise/api build && ls apps/api/dist/main.js
+(cd apps/api && NODE_ENV=development PORT=3999 node dist/main.js & sleep 4; kill %1)
 (cd apps/api && node dist/main.js; true)
 ```
 
-Expected: lint and typecheck exit 0. The first boot logs `Nest application successfully started`. The second (no `NODE_ENV`) exits with `Invalid environment configuration: NODE_ENV: ...`. On macOS without `timeout`, start it, look for the log line, and stop it with Ctrl+C.
+Expected: lint and typecheck exit 0 with no deprecation warnings; `dist/main.js` exists (not `dist/src/main.js`). The first boot logs `Nest application successfully started`. The second (no `NODE_ENV`) exits with `Invalid environment configuration: NODE_ENV: ...`.
 
 - [ ] **Step 7: Hand over for human review (ADR 0004)**
 
@@ -617,13 +648,14 @@ git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authore
 - Modify: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/app.module.ts`, `apps/api/package.json`
 - Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
 - Create: `apps/api/src/health/health.service.ts`, `apps/api/src/health/health.controller.ts`, `apps/api/src/health/health.module.ts`
-- Create: `apps/api/test/jest-e2e.json`, `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
+- Modify: `apps/api/vitest.config.mts` (add `e2e` project)
+- Create: `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
 - Test: `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`
 
 **Interfaces:**
 - Consumes: `validateEnv`, `configureApp`, `AppModule` (Task 2); `HealthResponse` (Task 1).
 - Produces:
-  - `EnvironmentVariables.DATABASE_URL: string`
+  - `envSchema` gains `DATABASE_URL: string` (so `EnvironmentVariables.DATABASE_URL: string`)
   - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions`
   - `entities: DataSourceOptions['entities']` (array) in `src/database/entities.ts`; `migrations: DataSourceOptions['migrations']` (array) in `src/migrations/index.ts`
   - `findPendingMigrations(dataSource: DataSource): Promise<string[]>` — names of known migrations not yet applied
@@ -703,11 +735,12 @@ Expected: FAIL in the new test (no `DATABASE_URL` validation yet).
 
 - [ ] **Step 3: Add DATABASE_URL**
 
-In `env.validation.ts`, extend the import to `import { IsEnum, IsIn, IsInt, Matches, Max, Min, validateSync } from 'class-validator';` and add to `EnvironmentVariables`:
+In `env.validation.ts`, add to the `envSchema` object:
 
 ```ts
-  @Matches(/^postgres(ql)?:\/\/.+/, { message: 'must be a postgres:// connection string' })
-  DATABASE_URL!: string;
+  DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\/.+/, 'must be a postgres:// connection string'),
 ```
 
 Run: `pnpm --filter @offwise/api test`
@@ -795,7 +828,7 @@ export class DatabaseModule {}
 Add to `apps/api/package.json` `scripts`:
 
 ```json
-    "test:e2e": "jest --config test/jest-e2e.json --runInBand",
+    "test:e2e": "vitest run --project e2e",
     "migration:generate": "sh -c 'typeorm-ts-node-commonjs -d src/data-source.ts migration:generate src/migrations/$0'",
     "migration:run": "typeorm-ts-node-commonjs -d src/data-source.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert",
@@ -840,21 +873,22 @@ Expected: `No migrations are pending` (and the `migrations` table now exists in 
 
 ```ts
 import type { DataSource } from 'typeorm';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { HealthService } from './health.service';
 
-function serviceWith(query: jest.Mock): HealthService {
+function serviceWith(query: Mock): HealthService {
   return new HealthService({ query } as unknown as DataSource);
 }
 
 describe('HealthService', () => {
   it('reports ok when the database answers', async () => {
-    const query = jest.fn().mockResolvedValue([{ '?column?': 1 }]);
+    const query = vi.fn().mockResolvedValue([{ '?column?': 1 }]);
     await expect(serviceWith(query).check()).resolves.toEqual({ status: 'ok', db: 'up' });
     expect(query).toHaveBeenCalledWith('SELECT 1');
   });
 
   it('reports error when the database query fails', async () => {
-    const query = jest.fn().mockRejectedValue(new Error('connection refused'));
+    const query = vi.fn().mockRejectedValue(new Error('connection refused'));
     await expect(serviceWith(query).check()).resolves.toEqual({ status: 'error', db: 'down' });
   });
 });
@@ -1021,19 +1055,20 @@ export async function resetDatabase(dataSource: DataSource): Promise<void> {
 }
 ```
 
-`apps/api/test/jest-e2e.json`:
+Add the `e2e` project to `test.projects` in `apps/api/vitest.config.mts` (after the `unit` entry):
 
-```json
-{
-  "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": "..",
-  "testRegex": "test/.*\\.e2e-spec\\.ts$",
-  "transform": { "^.+\\.ts$": "ts-jest" },
-  "testEnvironment": "node",
-  "setupFiles": ["<rootDir>/test/setup-env.ts"],
-  "globalSetup": "<rootDir>/test/global-setup.ts",
-  "moduleNameMapper": { "^@offwise/shared$": "<rootDir>/../../packages/shared/src" }
-}
+```ts
+      {
+        extends: true,
+        test: {
+          name: 'e2e',
+          include: ['test/**/*.e2e-spec.ts'],
+          setupFiles: ['test/setup-env.ts'],
+          globalSetup: ['test/global-setup.ts'],
+          // One shared test database: run e2e files one at a time.
+          fileParallelism: false,
+        },
+      },
 ```
 
 `apps/api/test/health.e2e-spec.ts`:
@@ -1041,6 +1076,7 @@ export async function resetDatabase(dataSource: DataSource): Promise<void> {
 ```ts
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp } from './utils/create-test-app';
 
 describe('GET /api/health (e2e)', () => {
@@ -1068,6 +1104,7 @@ Next, the startup check for pending migrations. `apps/api/test/pending-migration
 ```ts
 import 'reflect-metadata';
 import { DataSource, type MigrationInterface } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import { buildDataSourceOptions } from '../src/database/typeorm-options';
 import { findPendingMigrations } from '../src/database/pending-migrations';
 import { TEST_DATABASE_URL } from './test-env';
@@ -1112,7 +1149,7 @@ describe('findPendingMigrations (e2e)', () => {
 ```
 
 Run: `pnpm --filter @offwise/api test:e2e`
-Expected: FAIL — `Cannot find module '../src/database/pending-migrations'`.
+Expected: FAIL — `../src/database/pending-migrations` cannot be resolved.
 
 `apps/api/src/database/pending-migrations.ts`:
 
@@ -1301,14 +1338,15 @@ Expected for the two commands: the first applies `CreateInstallSteps176031360000
 
 ```ts
 import type { DataSource } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { InstallStep } from './install-step';
 import { InstallStepRunner } from './install-step-runner.service';
 
-const step = (name: string): InstallStep => ({ name, run: jest.fn() });
+const step = (name: string): InstallStep => ({ name, run: vi.fn() });
 
 describe('InstallStepRunner', () => {
   it('rejects duplicate step names before touching the database', async () => {
-    const transaction = jest.fn();
+    const transaction = vi.fn();
     const runner = new InstallStepRunner({ transaction } as unknown as DataSource);
 
     await expect(runner.run([step('a.one'), step('a.one')])).rejects.toThrow(
@@ -1324,6 +1362,7 @@ describe('InstallStepRunner', () => {
 ```ts
 import type { INestApplication } from '@nestjs/common';
 import { DataSource, type EntityManager } from 'typeorm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstallStep } from '../src/install/install-step';
 import { InstallStepRecord } from '../src/install/install-step-record.entity';
 import { InstallStepRunner } from '../src/install/install-step-runner.service';
@@ -1371,8 +1410,8 @@ describe('InstallStepRunner (e2e)', () => {
   });
 
   it('runs only steps added since the last run', async () => {
-    const first: InstallStep = { name: 'test.first', run: jest.fn() };
-    const later: InstallStep = { name: 'test.later', run: jest.fn() };
+    const first: InstallStep = { name: 'test.first', run: vi.fn() };
+    const later: InstallStep = { name: 'test.later', run: vi.fn() };
 
     await runner.run([first]);
     await expect(runner.run([first, later])).resolves.toEqual(['test.later']);
@@ -1387,7 +1426,7 @@ describe('InstallStepRunner (e2e)', () => {
         throw new Error('boom');
       },
     };
-    const after: InstallStep = { name: 'test.after', run: jest.fn() };
+    const after: InstallStep = { name: 'test.after', run: vi.fn() };
 
     await expect(runner.run([failing, after])).rejects.toThrow('boom');
 
@@ -1398,7 +1437,7 @@ describe('InstallStepRunner (e2e)', () => {
 ```
 
 Run: `pnpm --filter @offwise/api test && pnpm --filter @offwise/api test:e2e`
-Expected: FAIL — `Cannot find module './install-step-runner.service'`.
+Expected: FAIL — `./install-step-runner.service` cannot be resolved.
 
 - [ ] **Step 3: Implement runner, registry and module**
 
@@ -1581,7 +1620,6 @@ pnpm --filter @offwise/web add -D vite@^6 @vitejs/plugin-vue@^5 typescript@~5.9 
     "jsx": "preserve",
     "noEmit": true,
     "types": ["vite/client", "node"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@offwise/shared": ["../../packages/shared/src/index.ts"]
