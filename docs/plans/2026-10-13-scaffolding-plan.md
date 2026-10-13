@@ -18,6 +18,7 @@
 - Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>`). The root holds repo tooling only (`prettier`, `typescript`).
 - Tests use Vitest everywhere (ADR 0005). The API compiles tests with SWC (`unplugin-swc`) because Nest dependency injection needs decorator metadata, which esbuild does not emit. Test files import `describe`/`it`/`expect`/`vi` from `vitest` explicitly (no globals).
 - Env validation uses zod (ADR 0005); request DTOs keep class-validator.
+- All database table and column names are snake_case. `SnakeNamingStrategy` derives them from class and property names; explicit `name:` overrides are kept verbatim and must themselves be snake_case. An e2e guard checks the migrated schema.
 - Configs must be clean under TypeScript 6 (the editor's version): no `moduleResolution: node`/`node10`, no `baseUrl`, `rootDir` set wherever `outDir` is. ESLint configs use `defineConfig` from `eslint/config`, not the deprecated `tseslint.config()`.
 - Module 0 env vars only: `NODE_ENV`, `PORT` (default 3000), `LOG_LEVEL` (default `info`), `DATABASE_URL`. Validated at startup; invalid config stops the process. Documented in `apps/api/.env.example`.
 - The API never runs migrations automatically. Migrations run only through an explicit command: `migration:run` (dev, TypeScript) or `migration:run:dist` / `docker compose run --rm migrate` (built code). On startup the API checks for pending migrations and refuses to start if there are any.
@@ -53,6 +54,7 @@ apps/api/
   src/config/env.validation.ts      zod envSchema, EnvironmentVariables + validateEnv()
   src/config/log-levels.ts          LOG_LEVEL → Nest logger levels
   src/database/typeorm-options.ts   buildDataSourceOptions() — the one options object
+  src/database/snake-naming.strategy.ts  snake_case table/column names
   src/database/entities.ts          explicit entity list
   src/database/database.module.ts   TypeOrmModule.forRootAsync + pending-migration check on init
   src/database/pending-migrations.ts findPendingMigrations()
@@ -646,17 +648,18 @@ git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authore
 **Files:**
 - Create: `docker-compose.yml`, `docker/postgres/init/01-create-test-db.sql`, `apps/api/.env.example`
 - Modify: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/app.module.ts`, `apps/api/package.json`
-- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
+- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/snake-naming.strategy.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
 - Create: `apps/api/src/health/health.service.ts`, `apps/api/src/health/health.controller.ts`, `apps/api/src/health/health.module.ts`
 - Modify: `apps/api/vitest.config.mts` (add `e2e` project)
 - Create: `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
-- Test: `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`
+- Test: `apps/api/src/database/snake-naming.strategy.spec.ts`, `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`, `apps/api/test/naming-convention.e2e-spec.ts`
 
 **Interfaces:**
 - Consumes: `validateEnv`, `configureApp`, `AppModule` (Task 2); `HealthResponse` (Task 1).
 - Produces:
   - `envSchema` gains `DATABASE_URL: string` (so `EnvironmentVariables.DATABASE_URL: string`)
-  - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions`
+  - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions` (always sets `namingStrategy: new SnakeNamingStrategy()`)
+  - `class SnakeNamingStrategy extends DefaultNamingStrategy` (uses `snakeCase` from `change-case`)
   - `entities: DataSourceOptions['entities']` (array) in `src/database/entities.ts`; `migrations: DataSourceOptions['migrations']` (array) in `src/migrations/index.ts`
   - `findPendingMigrations(dataSource: DataSource): Promise<string[]>` — names of known migrations not yet applied
   - `DatabaseModule` — throws on module init if migrations are pending
@@ -753,6 +756,128 @@ pnpm --filter @offwise/api add typeorm@^0.3 @nestjs/typeorm@^11 pg
 pnpm --filter @offwise/api add -D ts-node
 ```
 
+First the naming strategy, test first. Install `change-case` (ESM-only; the CommonJS API loads it through Node 24's `require(esm)`, which TypeScript ≥5.8 supports under `nodenext`):
+
+```bash
+pnpm --filter @offwise/api add change-case@^5
+```
+
+`apps/api/src/database/snake-naming.strategy.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
+
+describe('SnakeNamingStrategy', () => {
+  const strategy = new SnakeNamingStrategy();
+
+  it('derives table names from the class name', () => {
+    expect(strategy.tableName('InstallStepRecord', undefined)).toBe('install_step_record');
+  });
+
+  it.each([
+    ['HTTPServer', 'http_server'],
+    ['InstallStepRecord', 'install_step_record'],
+  ])('converts table name %s to %s', (input, expected) => {
+    expect(strategy.tableName(input, undefined)).toBe(expected);
+  });
+
+  it.each([
+    ['userID', 'user_id'],
+    ['leaveType2Id', 'leave_type2_id'],
+  ])('converts column name %s to %s', (input, expected) => {
+    expect(strategy.columnName(input, undefined, [])).toBe(expected);
+  });
+
+  it('keeps an explicit table name verbatim', () => {
+    expect(strategy.tableName('InstallStepRecord', 'install_steps')).toBe('install_steps');
+  });
+
+  it('derives column names from the property name', () => {
+    expect(strategy.columnName('appliedAt', undefined, [])).toBe('applied_at');
+  });
+
+  it('keeps an explicit column name verbatim', () => {
+    expect(strategy.columnName('appliedAt', 'applied_on', [])).toBe('applied_on');
+  });
+
+  it('prefixes embedded columns', () => {
+    expect(strategy.columnName('startDate', undefined, ['period'])).toBe('period_start_date');
+  });
+
+  it('names join columns <relation>_<referenced column>', () => {
+    expect(strategy.joinColumnName('managerUser', 'id')).toBe('manager_user_id');
+  });
+
+  it('names join tables and their columns in snake_case', () => {
+    expect(strategy.joinTableName('user', 'holiday_group', 'holidayGroups', 'users')).toBe(
+      'user_holiday_groups_holiday_group',
+    );
+    expect(strategy.joinTableColumnName('user', 'id')).toBe('user_id');
+  });
+});
+```
+
+Run: `pnpm --filter @offwise/api test`
+Expected: FAIL — `./snake-naming.strategy` cannot be resolved.
+
+`apps/api/src/database/snake-naming.strategy.ts`:
+
+```ts
+import { snakeCase } from 'change-case';
+import { DefaultNamingStrategy, type NamingStrategyInterface } from 'typeorm';
+
+/**
+ * Every table and column name is snake_case (project rule). Names are derived from class and
+ * property names; an explicit `name:` is kept verbatim, and the e2e naming guard rejects it
+ * if it is not snake_case.
+ */
+export class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
+  override tableName(targetName: string, userSpecifiedName: string | undefined): string {
+    return userSpecifiedName ?? snakeCase(targetName);
+  }
+
+  override columnName(
+    propertyName: string,
+    customName: string | undefined,
+    embeddedPrefixes: string[],
+  ): string {
+    const name = customName ?? snakeCase(propertyName);
+    return embeddedPrefixes.length > 0 ? `${snakeCase(embeddedPrefixes.join('_'))}_${name}` : name;
+  }
+
+  override relationName(propertyName: string): string {
+    return snakeCase(propertyName);
+  }
+
+  override joinColumnName(relationName: string, referencedColumnName: string): string {
+    return snakeCase(`${relationName}_${referencedColumnName}`);
+  }
+
+  override joinTableName(
+    firstTableName: string,
+    secondTableName: string,
+    firstPropertyName: string,
+    // Required by the NamingStrategyInterface signature (typeorm 0.3), unused here.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _secondPropertyName: string,
+  ): string {
+    return `${firstTableName}_${snakeCase(firstPropertyName.replace(/\./g, '_'))}_${secondTableName}`;
+  }
+
+  override joinTableColumnName(
+    tableName: string,
+    propertyName: string,
+    columnName?: string,
+  ): string {
+    return snakeCase(`${tableName}_${columnName ?? propertyName}`);
+  }
+}
+```
+
+Run: `pnpm --filter @offwise/api test`
+Expected: PASS.
+
 `apps/api/src/database/entities.ts`:
 
 ```ts
@@ -777,6 +902,7 @@ export const migrations: DataSourceOptions['migrations'] = [];
 import type { DataSourceOptions } from 'typeorm';
 import { migrations } from '../migrations';
 import { entities } from './entities';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 /** The single options object shared by TypeOrmModule and the CLI data source. */
 export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
@@ -786,6 +912,7 @@ export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
     entities,
     migrations,
     migrationsTableName: 'migrations',
+    namingStrategy: new SnakeNamingStrategy(),
     // Never migrate on startup; migrations run only through an explicit command.
     synchronize: false,
   };
@@ -1055,9 +1182,14 @@ export async function resetDatabase(dataSource: DataSource): Promise<void> {
 }
 ```
 
-Add the `e2e` project to `test.projects` in `apps/api/vitest.config.mts` (after the `unit` entry):
+Add the `e2e` project to `test.projects` in `apps/api/vitest.config.mts` (after the `unit` entry), and set `fileParallelism: false` on the root `test` options (Vitest 3 does not allow it per project):
 
 ```ts
+    // The e2e project shares one test database, so test files run one at a time
+    // (not configurable per project in vitest 3).
+    fileParallelism: false,
+    projects: [
+      { extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } },
       {
         extends: true,
         test: {
@@ -1065,10 +1197,9 @@ Add the `e2e` project to `test.projects` in `apps/api/vitest.config.mts` (after 
           include: ['test/**/*.e2e-spec.ts'],
           setupFiles: ['test/setup-env.ts'],
           globalSetup: ['test/global-setup.ts'],
-          // One shared test database: run e2e files one at a time.
-          fileParallelism: false,
         },
       },
+    ],
 ```
 
 `apps/api/test/health.e2e-spec.ts`:
@@ -1210,6 +1341,51 @@ export class DatabaseModule implements OnModuleInit {
 }
 ```
 
+Finally, the naming guard. It reads the real migrated schema, so it also catches hand-written migrations and explicit `name:` overrides. `apps/api/test/naming-convention.e2e-spec.ts`:
+
+```ts
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildDataSourceOptions } from '../src/database/typeorm-options';
+import { TEST_DATABASE_URL } from './test-env';
+
+const SNAKE_CASE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
+
+const notSnakeCase = (names: string[]): string[] =>
+  [...new Set(names)].filter((name) => !SNAKE_CASE.test(name)).sort();
+
+describe('database naming convention (e2e)', () => {
+  let dataSource: DataSource;
+
+  beforeAll(async () => {
+    dataSource = await new DataSource(buildDataSourceOptions(TEST_DATABASE_URL)).initialize();
+  });
+
+  afterAll(async () => {
+    await dataSource.destroy();
+  });
+
+  it('uses snake_case for every table and column in the migrated schema', async () => {
+    const rows: { table_name: string; column_name: string }[] = await dataSource.query(
+      `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(notSnakeCase(rows.flatMap((row) => [row.table_name, row.column_name]))).toEqual([]);
+  });
+
+  it('maps every entity to snake_case table and column names', () => {
+    const names = dataSource.entityMetadatas.flatMap((metadata) => [
+      metadata.tableName,
+      ...metadata.columns.map((column) => column.databaseName),
+    ]);
+    expect(notSnakeCase(names)).toEqual([]);
+  });
+});
+```
+
+The second case has no entities to check until Task 4; the first already checks the `migrations` table. To see the guard fail, temporarily run `ALTER TABLE migrations ADD COLUMN "badName" int` against `offwise_test` (`docker compose exec db psql -U offwise -d offwise_test -c '...'`), run `pnpm --filter @offwise/api test:e2e` (Expected: FAIL listing `badName`), then drop the column again.
+
 - [ ] **Step 8: Run everything**
 
 ```bash
@@ -1220,7 +1396,7 @@ pnpm --filter @offwise/api typecheck
 pnpm --filter @offwise/api start:dev   # in another terminal: curl -s localhost:3000/api/health
 ```
 
-Expected: e2e PASS (3 tests); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
+Expected: e2e PASS (5 tests); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
 
 - [ ] **Step 9: Hand over for human review (ADR 0004)**
 
@@ -1276,7 +1452,7 @@ export class InstallStepRecord {
   @PrimaryColumn({ type: 'varchar', length: 200, primaryKeyConstraintName: 'PK_install_steps' })
   name!: string;
 
-  @CreateDateColumn({ name: 'applied_at', type: 'timestamptz' })
+  @CreateDateColumn({ type: 'timestamptz' }) // -> applied_at via SnakeNamingStrategy
   appliedAt!: Date;
 }
 ```
@@ -1541,7 +1717,7 @@ pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
 ```
 
-Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health, 2 pending-migration and 3 install-step tests); lint/typecheck exit 0.
+Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health, 2 pending-migration, 2 naming and 3 install-step tests); lint/typecheck exit 0.
 
 - [ ] **Step 5: Document the conventions in `apps/api/CLAUDE.md`**
 
@@ -2387,6 +2563,7 @@ git commit -m "chore: run full stack with docker compose; document dev workflow"
 | TypeORM data source and migrations, shared options; no automatic migrations, startup refuses pending migrations | 3, 7 |
 | Install-step runner (`install_steps`, once per installation, after migrations) | 4 |
 | Health endpoint | 3 |
+| snake_case table and column names (naming strategy + schema guard) | 3 |
 | vue-i18n with English only | 5 |
 | Required scripts in every workspace; Storybook | 1, 2, 3, 5, 6 |
 | E2E test-data isolation (ADR 0001 consequence) | 3 |
