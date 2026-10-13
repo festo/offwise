@@ -21,4 +21,6 @@ Before reporting done, run and read the output of:
 - `pnpm --filter @offwise/api test`
 - `pnpm --filter @offwise/api test:e2e` (with `docker compose up -d db`)
 
-Report: files changed, endpoints or contracts added or changed, migrations added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly.
+If a command or script doesn't exist yet, report it as missing; don't invent a substitute or claim it passed.
+
+If the dispatching prompt specifies a report format, use it, and include the command results. Otherwise report: files changed, endpoints or contracts added or changed, migrations added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly.

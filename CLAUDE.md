@@ -25,23 +25,28 @@ docker compose up                  # start web, api, and postgres
 pnpm -r lint                       # lint everything
 pnpm -r typecheck                  # typecheck everything
 pnpm -r test                       # unit tests everywhere
+pnpm -r format                     # prettier
 pnpm --filter @offwise/web storybook   # component review
 pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres from docker compose)
 ```
+
+Scaffolding must define `lint`, `typecheck`, `test` and `format` in every workspace; `test:e2e`, `migration:generate` and `migration:run` in api; and `storybook` and `build-storybook` in web. It must also define a compose service named `db`, because the agents depend on these names.
 
 Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>`), never to the root unless it is repo tooling.
 
 ## Workflow
 
-We use the Superpowers plugin (enabled in `.claude/settings.json`, so trust the repo to install it) plus two project agents.
+We use the Superpowers plugin plus two project agents. When you first open the repo in Claude Code and trust the folder, you'll be prompted to add the `superpowers-dev` marketplace and install the plugin; accept both.
 
-1. **Spec:** `superpowers:brainstorming` writes to `docs/specs/`. A human reviews it in a PR.
-2. **Plan:** `superpowers:writing-plans` writes to `docs/plans/`.
-3. **Implement:** on a feature branch, using `superpowers:subagent-driven-development` with TDD (`superpowers:test-driven-development`).
+1. **Branch:** create the branch first (`feat/<topic>`, etc.). The spec, plan, and implementation commits all go on it. Brainstorming commits the spec, so it must not run on `main`.
+2. **Spec:** `superpowers:brainstorming` writes to `docs/specs/`. A human reviews it in a PR.
+3. **Plan:** `superpowers:writing-plans` writes to `docs/plans/`.
+4. **Implement:** on the feature branch, using `superpowers:subagent-driven-development` with TDD (`superpowers:test-driven-development`).
    - `apps/web` work → `frontend` agent
    - `apps/api` work → `backend` agent
    - Contract changes in `packages/shared` go with the backend task that introduces them.
-4. **Verify and review:** `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`, then a PR to `main`.
+   - When `superpowers:subagent-driven-development` dispatches an implementer, use the `frontend` subagent type for `apps/web` tasks and `backend` for `apps/api` and `packages/shared` tasks, instead of general-purpose. Keep the skill's prompt and report format.
+5. **Verify and review:** `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`, then a PR to `main`.
 
 These paths override the Superpowers defaults: specs go in `docs/specs/` and plans in `docs/plans/`, **not** `docs/superpowers/...`.
 

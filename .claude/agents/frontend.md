@@ -21,4 +21,6 @@ Before reporting done, run and read the output of:
 - `pnpm --filter @offwise/web test`
 - `pnpm --filter @offwise/web build-storybook`
 
-Report: files changed, stories added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly.
+If a command or script doesn't exist yet, report it as missing; don't invent a substitute or claim it passed.
+
+If the dispatching prompt specifies a report format, use it, and include the command results. Otherwise report: files changed, stories added, and each command with its pass/fail result. If anything fails or was skipped, say so plainly.
