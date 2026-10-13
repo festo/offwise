@@ -22,3 +22,6 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Claude Code personal overrides
+.claude/settings.local.json
