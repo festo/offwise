@@ -5,7 +5,7 @@
 
 ## Goal
 
-Before writing application code, agree on two things for offwise, based on the product feature specification (`Feature Specification.md`):
+Before writing application code, agree on two things for offwise, based on the product feature specification (`docs/specs/product-feature-specification.md`):
 
 1. **Configuration model:** what lives in environment variables, what is an admin-editable setting stored in the database, what is seeded on install, and what is dev-only fixture data.
 2. **Module roadmap:** how the feature set splits into separately specified, planned and shipped modules, and in which order.
