@@ -7,6 +7,7 @@
   },
   "scripts": {
     "postinstall": "pnpm --filter @offwise/shared build",
+    "dev": "pnpm --parallel --filter @offwise/shared --filter @offwise/api --filter @offwise/web run dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
@@ -14,6 +15,7 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@playwright/mcp": "0.0.83",
     "prettier": "^3.9.10",
     "typescript": "~5.9.3"
   }

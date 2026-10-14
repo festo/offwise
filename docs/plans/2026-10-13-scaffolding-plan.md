@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install-step runner and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and `docker compose up` running the whole stack.
+**Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install command and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and a devcontainer in which `pnpm dev` runs the whole app (ADR 0007).
 
-**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with class-validator at startup, shares one TypeORM options builder between Nest and the TypeORM CLI, never runs migrations itself (it refuses to start while migrations are pending), and runs pending install steps on boot. The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0003.
+**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with zod at startup and shares one TypeORM options builder with the TypeORM CLI. It neither runs nor checks migrations and install steps; those are explicit operator commands (`migrate`, `install`) run before the API starts (ADR 0006). The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0006.
 
-**Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Jest 29 + supertest, Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
+**Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Vitest 3 (API via unplugin-swc) + supertest, zod 4 (env validation), Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
 
 ## Global Constraints
 
@@ -16,17 +16,31 @@
 - Every workspace defines `lint`, `typecheck`, `test`, `format`. The api also defines `test:e2e`, `migration:generate`, `migration:run`. The web app also defines `storybook`, `build-storybook`.
 - The compose service for PostgreSQL is named `db`.
 - Add dependencies to the workspace that uses them (`pnpm --filter <pkg> add <dep>`). The root holds repo tooling only (`prettier`, `typescript`).
+- Tests use Vitest everywhere (ADR 0005). The API compiles tests with SWC (`unplugin-swc`) because Nest dependency injection needs decorator metadata, which esbuild does not emit. Test files import `describe`/`it`/`expect`/`vi` from `vitest` explicitly (no globals).
+- Env validation uses zod (ADR 0005); request DTOs keep class-validator.
+- All database table and column names are snake_case. `SnakeNamingStrategy` derives them from class and property names; explicit `name:` overrides are kept verbatim and must themselves be snake_case. An e2e guard checks the migrated schema.
+- Configs must be clean under TypeScript 6 (the editor's version): no `moduleResolution: node`/`node10`, no `baseUrl`, `rootDir` set wherever `outDir` is. ESLint configs use `defineConfig` from `eslint/config`, not the deprecated `tseslint.config()`.
 - Module 0 env vars only: `NODE_ENV`, `PORT` (default 3000), `LOG_LEVEL` (default `info`), `DATABASE_URL`. Validated at startup; invalid config stops the process. Documented in `apps/api/.env.example`.
-- The API never runs migrations automatically. Migrations run only through an explicit command: `migration:run` (dev, TypeScript) or `migration:run:dist` / `docker compose run --rm migrate` (built code). On startup the API checks for pending migrations and refuses to start if there are any.
+- ADR 0006: migrations and install steps run only through explicit commands — `migration:run` / `migration:run:dist` / `docker compose run --rm migrate`, and `install:run` / `install:run:dist` / `docker compose run --rm install`. The API neither runs nor checks either; deploy = migrate, install, start.
+- Migrations are discovered by glob (`src/migrations/*{.ts,.js}`), never under Vitest (TypeORM's own `require` bypasses SWC); e2e setup migrates `offwise_test` through the CLI. Migrations are always generated or created by the TypeORM CLI (`.claude/skills/typeorm-migrations/SKILL.md`).
 - TypeORM: `synchronize: false` always; `migrationsRun` is never set; data source file is `apps/api/src/data-source.ts`; migrations live in `apps/api/src/migrations/`; Nest and the CLI share one options builder.
 - The web app has no runtime env; it calls `/api` on its own origin.
 - Workspace `format` scripts run Prettier from the workspace directory, so they pass the root `.gitignore` and `.prettierignore` explicitly with `--ignore-path`.
 - vue-i18n is wired with English only; every user-visible string goes through `t()`.
 - Leave dates and domain logic are out of scope for this module.
 
+## Amendments after execution
+
+Decisions made while Tasks 3–4 were being implemented. Task text below for those tasks is kept as originally written; where it conflicts, this section wins.
+
+- **Migrations by glob, not an array** (Task 3/4): `src/migrations/index.ts` is gone; `buildDataSourceOptions` uses `src/migrations/*{.ts,.js}` except under Vitest (`[]`); `test/global-setup.ts` runs `migration:run` through the CLI against `offwise_test`; `migration:create` script added.
+- **CLI-generated migration** (Task 4): the hand-written `1760313600000-CreateInstallSteps.ts` was replaced by the CLI-generated `1791956603819-CreateInstallSteps.ts`.
+- **Task 7 replaced by the devcontainer** (ADR 0007): production images, nginx and compose `migrate`/`install`/`api`/`web` services are deferred to a deployment module.
+- **No startup checks; explicit install command** (ADR 0006): the pending-migration check (`findPendingMigrations`, `DatabaseModule.onModuleInit`, their tests) is removed. `InstallModule` no longer runs steps on bootstrap. `src/install.ts` (dev: `install:run`, built: `install:run:dist`) applies pending install steps from a Nest application context; compose gets a one-shot `install` service next to `migrate`.
+
 ## Agent routing
 
-Tasks 1–4 and 7 → `backend` agent. Tasks 5–6 → `frontend` agent.
+Tasks 1–4 → `backend` agent. Tasks 5–6 → `frontend` agent. Task 7 (devcontainer, repo tooling) → `general-purpose`.
 
 ## File structure
 
@@ -47,19 +61,21 @@ apps/api/
   src/main.ts                       bootstrap (dotenv → validate env → Nest)
   src/app.module.ts                 root module
   src/app.setup.ts                  configureApp(): prefix + ValidationPipe (shared with e2e)
-  src/config/env.validation.ts      EnvironmentVariables + validateEnv()
+  src/config/env.validation.ts      zod envSchema, EnvironmentVariables + validateEnv()
+  src/config/app-config.module.ts   AppConfigModule (ConfigModule.forRoot, shared by API and install command)
   src/config/log-levels.ts          LOG_LEVEL → Nest logger levels
   src/database/typeorm-options.ts   buildDataSourceOptions() — the one options object
+  src/database/snake-naming.strategy.ts  snake_case table/column names
   src/database/entities.ts          explicit entity list
-  src/database/database.module.ts   TypeOrmModule.forRootAsync + pending-migration check on init
-  src/database/pending-migrations.ts findPendingMigrations()
-  src/migrations/index.ts           explicit migration list
-  src/migrations/1760313600000-CreateInstallSteps.ts
+  src/database/database.module.ts   TypeOrmModule.forRootAsync
+  src/migrations/1791956603819-CreateInstallSteps.ts  CLI-generated; migrations are found by glob
   src/data-source.ts                TypeORM CLI data source
+  src/install.ts                    explicit install command (Nest application context, ADR 0006)
   src/migrate.ts                    explicit migration command for built code (containers)
   src/health/                       GET /api/health
   src/install/                      install-step contract, record entity, runner, registry, module
-  test/                             e2e config, env, global setup, helpers, specs
+  vitest.config.mts                 unit + e2e Vitest projects (SWC)
+  test/                             e2e env, global setup, helpers, specs
 
 apps/web/
   Dockerfile, nginx.conf, index.html, vite.config.ts, components.json
@@ -206,8 +222,8 @@ trim_trailing_whitespace = true
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "noEmit": true
   },
   "include": ["src"]
@@ -232,13 +248,14 @@ trim_trailing_whitespace = true
 
 ```js
 import js from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['dist', 'coverage'] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   prettier,
 );
 ```
@@ -299,19 +316,21 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
 ### Task 2: API skeleton with validated env
 
 **Files:**
-- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`, `apps/api/eslint.config.mjs`
+- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`, `apps/api/eslint.config.mjs`, `apps/api/vitest.config.mts`
 - Create: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/log-levels.ts`, `apps/api/src/app.module.ts`, `apps/api/src/app.setup.ts`, `apps/api/src/main.ts`
 - Test: `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/config/log-levels.spec.ts`
 
 **Interfaces:**
 - Consumes: `API_PREFIX` from `@offwise/shared`.
 - Produces:
-  - `enum NodeEnv`, `const LOG_LEVELS`, `type LogLevel = 'error' | 'warn' | 'info' | 'debug'`
-  - `class EnvironmentVariables { NODE_ENV: NodeEnv; PORT: number; LOG_LEVEL: LogLevel }` (Task 3 adds `DATABASE_URL: string`)
-  - `validateEnv(config: Record<string, unknown>): EnvironmentVariables` — throws `Error('Invalid environment configuration: ...')`
+  - `NODE_ENVS`, `LOG_LEVELS` (readonly tuples), `envSchema` (zod object; Task 3 adds `DATABASE_URL`)
+  - `type EnvironmentVariables = z.infer<typeof envSchema>` — `{ NODE_ENV: 'development' | 'test' | 'production'; PORT: number; LOG_LEVEL: LogLevel }`
+  - `type LogLevel = 'error' | 'warn' | 'info' | 'debug'`
+  - `validateEnv(config: Record<string, unknown>): EnvironmentVariables` — throws `Error('Invalid environment configuration: <path>: <message>; ...')`; unknown keys are dropped
   - `toNestLogLevels(level: LogLevel): NestLogLevel[]`
   - `configureApp(app: INestApplication): void` — sets the `api` prefix and the global `ValidationPipe`
   - `AppModule`
+  - `apps/api/vitest.config.mts` with a `unit` project (`src/**/*.spec.ts`); Task 3 adds an `e2e` project
 
 - [ ] **Step 1: Package and tooling files**
 
@@ -328,48 +347,46 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
     "start": "node dist/main.js",
     "start:dev": "pnpm --filter @offwise/shared build && nest start --watch",
     "lint": "eslint .",
-    "typecheck": "pnpm --filter @offwise/shared build && tsc --noEmit -p tsconfig.json",
-    "test": "jest",
+    "typecheck": "pnpm --filter @offwise/shared build && tsc -p tsconfig.json",
+    "test": "vitest run --project unit",
     "format": "prettier --write . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore"
-  },
-  "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": { "^.+\\.ts$": "ts-jest" },
-    "testEnvironment": "node",
-    "moduleNameMapper": { "^@offwise/shared$": "<rootDir>/../../../packages/shared/src" }
   }
 }
 ```
 
-`apps/api/tsconfig.json`:
+`apps/api/tsconfig.json` (typecheck only; never emits):
 
 ```json
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "outDir": "dist",
-    "types": ["node", "jest"]
+    "noEmit": true,
+    "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "vitest.config.mts"]
 }
 ```
 
-`apps/api/tsconfig.build.json`:
+`apps/api/tsconfig.build.json` (what `nest build` compiles):
 
 ```json
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": "src", "types": ["node"] },
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.spec.ts"]
 }
 ```
+
+The package has no `"type": "module"`, so `nodenext` compiles `src` to CommonJS (what Nest expects) and relative imports need no file extensions.
 
 `apps/api/nest-cli.json`:
 
@@ -386,37 +403,66 @@ git commit -m "chore: set up pnpm workspace and @offwise/shared" -m "Co-Authored
 
 ```js
 import js from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['dist', 'coverage'] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   prettier,
-  { languageOptions: { globals: { ...globals.node, ...globals.jest } } },
+  { languageOptions: { globals: globals.node } },
 );
+```
+
+`apps/api/vitest.config.mts`:
+
+```ts
+import { fileURLToPath, URL } from 'node:url';
+import swc from 'unplugin-swc';
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  // SWC instead of esbuild: Nest dependency injection needs emitDecoratorMetadata.
+  plugins: [swc.vite({ module: { type: 'es6' } })],
+  resolve: {
+    alias: {
+      // Tests use the shared source, so they never depend on a stale packages/shared/dist.
+      '@offwise/shared': fileURLToPath(
+        new URL('../../packages/shared/src/index.ts', import.meta.url),
+      ),
+    },
+  },
+  test: {
+    environment: 'node',
+    projects: [{ extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } }],
+  },
+});
 ```
 
 Install:
 
 ```bash
-pnpm --filter @offwise/api add @offwise/shared@workspace:* @nestjs/common@^11 @nestjs/core@^11 @nestjs/platform-express@^11 @nestjs/config@^4 class-validator class-transformer reflect-metadata rxjs dotenv
-pnpm --filter @offwise/api add -D @nestjs/cli@^11 @nestjs/schematics@^11 @nestjs/testing@^11 typescript@~5.9 @types/node@^24 jest@^29 ts-jest@^29 @types/jest@^29 supertest @types/supertest eslint@^9 @eslint/js@^9 typescript-eslint@^8 eslint-config-prettier@^10 globals
+pnpm --filter @offwise/api add @offwise/shared@workspace:* @nestjs/common@^11 @nestjs/core@^11 @nestjs/platform-express@^11 @nestjs/config@^4 class-validator class-transformer reflect-metadata rxjs dotenv zod@^4
+pnpm --filter @offwise/api add -D @nestjs/cli@^11 @nestjs/schematics@^11 @nestjs/testing@^11 typescript@~5.9 @types/node@^24 vitest@^3.2 unplugin-swc @swc/core supertest @types/supertest eslint@^9 @eslint/js@^9 typescript-eslint@^8 eslint-config-prettier@^10 globals
 ```
+
+(`class-validator`/`class-transformer` are for request DTOs and the global `ValidationPipe`, not for env.) If pnpm reports ignored build scripts for `@swc/core`, check `pnpm --filter @offwise/api test` still runs; SWC ships its binary as an optional dependency.
 
 - [ ] **Step 2: Write the failing tests**
 
 `apps/api/src/config/env.validation.spec.ts`:
 
 ```ts
-import { NodeEnv, validateEnv } from './env.validation';
+import { describe, expect, it } from 'vitest';
+import { validateEnv } from './env.validation';
 
 describe('validateEnv', () => {
   it('applies defaults for optional variables', () => {
     const env = validateEnv({ NODE_ENV: 'test' });
-    expect(env.NODE_ENV).toBe(NodeEnv.Test);
+    expect(env.NODE_ENV).toBe('test');
     expect(env.PORT).toBe(3000);
     expect(env.LOG_LEVEL).toBe('info');
   });
@@ -425,8 +471,12 @@ describe('validateEnv', () => {
     expect(validateEnv({ NODE_ENV: 'production', PORT: '8080' }).PORT).toBe(8080);
   });
 
-  it('rejects a missing NODE_ENV', () => {
-    expect(() => validateEnv({})).toThrow(/NODE_ENV/);
+  it('drops variables it does not know', () => {
+    expect(validateEnv({ NODE_ENV: 'test', PATH: '/usr/bin' })).not.toHaveProperty('PATH');
+  });
+
+  it('rejects a missing NODE_ENV with a prefixed message naming the variable', () => {
+    expect(() => validateEnv({})).toThrow(/^Invalid environment configuration: .*NODE_ENV/);
   });
 
   it('rejects an unknown LOG_LEVEL', () => {
@@ -442,15 +492,20 @@ describe('validateEnv', () => {
 `apps/api/src/config/log-levels.spec.ts`:
 
 ```ts
+import { describe, expect, it } from 'vitest';
 import { toNestLogLevels } from './log-levels';
 
 describe('toNestLogLevels', () => {
-  it('maps info to Nest "log" and everything more severe', () => {
-    expect(toNestLogLevels('info')).toEqual(['fatal', 'error', 'warn', 'log']);
-  });
-
   it('maps error to fatal and error only', () => {
     expect(toNestLogLevels('error')).toEqual(['fatal', 'error']);
+  });
+
+  it('maps warn to fatal, error and warn', () => {
+    expect(toNestLogLevels('warn')).toEqual(['fatal', 'error', 'warn']);
+  });
+
+  it('maps info to Nest "log" and everything more severe', () => {
+    expect(toNestLogLevels('info')).toEqual(['fatal', 'error', 'warn', 'log']);
   });
 
   it('includes debug but not verbose for debug', () => {
@@ -462,51 +517,37 @@ describe('toNestLogLevels', () => {
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `pnpm --filter @offwise/api test`
-Expected: FAIL — `Cannot find module './env.validation'` and `'./log-levels'`.
+Expected: FAIL — `./env.validation` and `./log-levels` cannot be resolved.
 
 - [ ] **Step 4: Implement**
 
 `apps/api/src/config/env.validation.ts`:
 
 ```ts
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, Max, Min, validateSync } from 'class-validator';
+import { z } from 'zod';
 
-export enum NodeEnv {
-  Development = 'development',
-  Test = 'test',
-  Production = 'production',
-}
-
+export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export const LOG_LEVELS = ['error', 'warn', 'info', 'debug'] as const;
-export type LogLevel = (typeof LOG_LEVELS)[number];
 
-export class EnvironmentVariables {
-  @IsEnum(NodeEnv)
-  NODE_ENV!: NodeEnv;
+export const envSchema = z.object({
+  NODE_ENV: z.enum(NODE_ENVS),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+});
 
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  PORT: number = 3000;
+export type EnvironmentVariables = z.infer<typeof envSchema>;
+export type LogLevel = EnvironmentVariables['LOG_LEVEL'];
 
-  @IsIn(LOG_LEVELS)
-  LOG_LEVEL: LogLevel = 'info';
-}
-
+/** Validates and normalises process.env-like input; unknown variables are dropped. */
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
-  const env = plainToInstance(EnvironmentVariables, config, {
-    enableImplicitConversion: true,
-    exposeDefaultValues: true,
-  });
-  const errors = validateSync(env);
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${error.property}: ${Object.values(error.constraints ?? {}).join(', ')}`)
+  const result = envSchema.safeParse(config);
+  if (!result.success) {
+    const details = result.error.issues
+      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
       .join('; ');
     throw new Error(`Invalid environment configuration: ${details}`);
   }
-  return env;
+  return result.data;
 }
 ```
 
@@ -574,6 +615,7 @@ import { validateEnv } from './config/env.validation';
 import { toNestLogLevels } from './config/log-levels';
 
 async function bootstrap(): Promise<void> {
+  // Validated here too (not only in ConfigModule) because PORT and LOG_LEVEL are needed before Nest starts.
   const env = validateEnv(process.env);
   const app = await NestFactory.create(AppModule, { logger: toNestLogLevels(env.LOG_LEVEL) });
   configureApp(app);
@@ -587,18 +629,19 @@ void bootstrap();
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm --filter @offwise/api test`
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests, no warnings in the output.
 
 - [ ] **Step 6: Verify lint, typecheck and boot**
 
 ```bash
 pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
-pnpm --filter @offwise/api build && (cd apps/api && NODE_ENV=development PORT=3999 timeout 5 node dist/main.js; true)
+pnpm --filter @offwise/api build && ls apps/api/dist/main.js
+(cd apps/api && NODE_ENV=development PORT=3999 node dist/main.js & sleep 4; kill %1)
 (cd apps/api && node dist/main.js; true)
 ```
 
-Expected: lint and typecheck exit 0. The first boot logs `Nest application successfully started`. The second (no `NODE_ENV`) exits with `Invalid environment configuration: NODE_ENV: ...`. On macOS without `timeout`, start it, look for the log line, and stop it with Ctrl+C.
+Expected: lint and typecheck exit 0 with no deprecation warnings; `dist/main.js` exists (not `dist/src/main.js`). The first boot logs `Nest application successfully started`. The second (no `NODE_ENV`) exits with `Invalid environment configuration: NODE_ENV: ...`.
 
 - [ ] **Step 7: Hand over for human review (ADR 0004)**
 
@@ -615,16 +658,18 @@ git commit -m "feat(api): scaffold NestJS app with validated env" -m "Co-Authore
 **Files:**
 - Create: `docker-compose.yml`, `docker/postgres/init/01-create-test-db.sql`, `apps/api/.env.example`
 - Modify: `apps/api/src/config/env.validation.ts`, `apps/api/src/config/env.validation.spec.ts`, `apps/api/src/app.module.ts`, `apps/api/package.json`
-- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
+- Create: `apps/api/src/database/typeorm-options.ts`, `apps/api/src/database/snake-naming.strategy.ts`, `apps/api/src/database/entities.ts`, `apps/api/src/database/database.module.ts`, `apps/api/src/database/pending-migrations.ts`, `apps/api/src/migrations/index.ts`, `apps/api/src/data-source.ts`, `apps/api/src/migrate.ts`
 - Create: `apps/api/src/health/health.service.ts`, `apps/api/src/health/health.controller.ts`, `apps/api/src/health/health.module.ts`
-- Create: `apps/api/test/jest-e2e.json`, `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
-- Test: `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`
+- Modify: `apps/api/vitest.config.mts` (add `e2e` project)
+- Create: `apps/api/test/test-env.ts`, `apps/api/test/setup-env.ts`, `apps/api/test/global-setup.ts`, `apps/api/test/utils/create-test-app.ts`, `apps/api/test/utils/reset-database.ts`
+- Test: `apps/api/src/database/snake-naming.strategy.spec.ts`, `apps/api/src/health/health.service.spec.ts`, `apps/api/test/health.e2e-spec.ts`, `apps/api/test/pending-migrations.e2e-spec.ts`, `apps/api/test/naming-convention.e2e-spec.ts`
 
 **Interfaces:**
 - Consumes: `validateEnv`, `configureApp`, `AppModule` (Task 2); `HealthResponse` (Task 1).
 - Produces:
-  - `EnvironmentVariables.DATABASE_URL: string`
-  - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions`
+  - `envSchema` gains `DATABASE_URL: string` (so `EnvironmentVariables.DATABASE_URL: string`)
+  - `buildDataSourceOptions(databaseUrl: string): DataSourceOptions` (always sets `namingStrategy: new SnakeNamingStrategy()`)
+  - `class SnakeNamingStrategy extends DefaultNamingStrategy` (uses `snakeCase` from `change-case`)
   - `entities: DataSourceOptions['entities']` (array) in `src/database/entities.ts`; `migrations: DataSourceOptions['migrations']` (array) in `src/migrations/index.ts`
   - `findPendingMigrations(dataSource: DataSource): Promise<string[]>` — names of known migrations not yet applied
   - `DatabaseModule` — throws on module init if migrations are pending
@@ -703,11 +748,12 @@ Expected: FAIL in the new test (no `DATABASE_URL` validation yet).
 
 - [ ] **Step 3: Add DATABASE_URL**
 
-In `env.validation.ts`, extend the import to `import { IsEnum, IsIn, IsInt, Matches, Max, Min, validateSync } from 'class-validator';` and add to `EnvironmentVariables`:
+In `env.validation.ts`, add to the `envSchema` object:
 
 ```ts
-  @Matches(/^postgres(ql)?:\/\/.+/, { message: 'must be a postgres:// connection string' })
-  DATABASE_URL!: string;
+  DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\/.+/, 'must be a postgres:// connection string'),
 ```
 
 Run: `pnpm --filter @offwise/api test`
@@ -719,6 +765,128 @@ Expected: PASS.
 pnpm --filter @offwise/api add typeorm@^0.3 @nestjs/typeorm@^11 pg
 pnpm --filter @offwise/api add -D ts-node
 ```
+
+First the naming strategy, test first. Install `change-case` (ESM-only; the CommonJS API loads it through Node 24's `require(esm)`, which TypeScript ≥5.8 supports under `nodenext`):
+
+```bash
+pnpm --filter @offwise/api add change-case@^5
+```
+
+`apps/api/src/database/snake-naming.strategy.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
+
+describe('SnakeNamingStrategy', () => {
+  const strategy = new SnakeNamingStrategy();
+
+  it('derives table names from the class name', () => {
+    expect(strategy.tableName('InstallStepRecord', undefined)).toBe('install_step_record');
+  });
+
+  it.each([
+    ['HTTPServer', 'http_server'],
+    ['InstallStepRecord', 'install_step_record'],
+  ])('converts table name %s to %s', (input, expected) => {
+    expect(strategy.tableName(input, undefined)).toBe(expected);
+  });
+
+  it.each([
+    ['userID', 'user_id'],
+    ['leaveType2Id', 'leave_type2_id'],
+  ])('converts column name %s to %s', (input, expected) => {
+    expect(strategy.columnName(input, undefined, [])).toBe(expected);
+  });
+
+  it('keeps an explicit table name verbatim', () => {
+    expect(strategy.tableName('InstallStepRecord', 'install_steps')).toBe('install_steps');
+  });
+
+  it('derives column names from the property name', () => {
+    expect(strategy.columnName('appliedAt', undefined, [])).toBe('applied_at');
+  });
+
+  it('keeps an explicit column name verbatim', () => {
+    expect(strategy.columnName('appliedAt', 'applied_on', [])).toBe('applied_on');
+  });
+
+  it('prefixes embedded columns', () => {
+    expect(strategy.columnName('startDate', undefined, ['period'])).toBe('period_start_date');
+  });
+
+  it('names join columns <relation>_<referenced column>', () => {
+    expect(strategy.joinColumnName('managerUser', 'id')).toBe('manager_user_id');
+  });
+
+  it('names join tables and their columns in snake_case', () => {
+    expect(strategy.joinTableName('user', 'holiday_group', 'holidayGroups', 'users')).toBe(
+      'user_holiday_groups_holiday_group',
+    );
+    expect(strategy.joinTableColumnName('user', 'id')).toBe('user_id');
+  });
+});
+```
+
+Run: `pnpm --filter @offwise/api test`
+Expected: FAIL — `./snake-naming.strategy` cannot be resolved.
+
+`apps/api/src/database/snake-naming.strategy.ts`:
+
+```ts
+import { snakeCase } from 'change-case';
+import { DefaultNamingStrategy, type NamingStrategyInterface } from 'typeorm';
+
+/**
+ * Every table and column name is snake_case (project rule). Names are derived from class and
+ * property names; an explicit `name:` is kept verbatim, and the e2e naming guard rejects it
+ * if it is not snake_case.
+ */
+export class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
+  override tableName(targetName: string, userSpecifiedName: string | undefined): string {
+    return userSpecifiedName ?? snakeCase(targetName);
+  }
+
+  override columnName(
+    propertyName: string,
+    customName: string | undefined,
+    embeddedPrefixes: string[],
+  ): string {
+    const name = customName ?? snakeCase(propertyName);
+    return embeddedPrefixes.length > 0 ? `${snakeCase(embeddedPrefixes.join('_'))}_${name}` : name;
+  }
+
+  override relationName(propertyName: string): string {
+    return snakeCase(propertyName);
+  }
+
+  override joinColumnName(relationName: string, referencedColumnName: string): string {
+    return snakeCase(`${relationName}_${referencedColumnName}`);
+  }
+
+  override joinTableName(
+    firstTableName: string,
+    secondTableName: string,
+    firstPropertyName: string,
+    // Required by the NamingStrategyInterface signature (typeorm 0.3), unused here.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _secondPropertyName: string,
+  ): string {
+    return `${firstTableName}_${snakeCase(firstPropertyName.replace(/\./g, '_'))}_${secondTableName}`;
+  }
+
+  override joinTableColumnName(
+    tableName: string,
+    propertyName: string,
+    columnName?: string,
+  ): string {
+    return snakeCase(`${tableName}_${columnName ?? propertyName}`);
+  }
+}
+```
+
+Run: `pnpm --filter @offwise/api test`
+Expected: PASS.
 
 `apps/api/src/database/entities.ts`:
 
@@ -744,6 +912,7 @@ export const migrations: DataSourceOptions['migrations'] = [];
 import type { DataSourceOptions } from 'typeorm';
 import { migrations } from '../migrations';
 import { entities } from './entities';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 /** The single options object shared by TypeOrmModule and the CLI data source. */
 export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
@@ -753,6 +922,7 @@ export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
     entities,
     migrations,
     migrationsTableName: 'migrations',
+    namingStrategy: new SnakeNamingStrategy(),
     // Never migrate on startup; migrations run only through an explicit command.
     synchronize: false,
   };
@@ -795,7 +965,7 @@ export class DatabaseModule {}
 Add to `apps/api/package.json` `scripts`:
 
 ```json
-    "test:e2e": "jest --config test/jest-e2e.json --runInBand",
+    "test:e2e": "vitest run --project e2e",
     "migration:generate": "sh -c 'typeorm-ts-node-commonjs -d src/data-source.ts migration:generate src/migrations/$0'",
     "migration:run": "typeorm-ts-node-commonjs -d src/data-source.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert",
@@ -840,21 +1010,22 @@ Expected: `No migrations are pending` (and the `migrations` table now exists in 
 
 ```ts
 import type { DataSource } from 'typeorm';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { HealthService } from './health.service';
 
-function serviceWith(query: jest.Mock): HealthService {
+function serviceWith(query: Mock): HealthService {
   return new HealthService({ query } as unknown as DataSource);
 }
 
 describe('HealthService', () => {
   it('reports ok when the database answers', async () => {
-    const query = jest.fn().mockResolvedValue([{ '?column?': 1 }]);
+    const query = vi.fn().mockResolvedValue([{ '?column?': 1 }]);
     await expect(serviceWith(query).check()).resolves.toEqual({ status: 'ok', db: 'up' });
     expect(query).toHaveBeenCalledWith('SELECT 1');
   });
 
   it('reports error when the database query fails', async () => {
-    const query = jest.fn().mockRejectedValue(new Error('connection refused'));
+    const query = vi.fn().mockRejectedValue(new Error('connection refused'));
     await expect(serviceWith(query).check()).resolves.toEqual({ status: 'error', db: 'down' });
   });
 });
@@ -1021,19 +1192,24 @@ export async function resetDatabase(dataSource: DataSource): Promise<void> {
 }
 ```
 
-`apps/api/test/jest-e2e.json`:
+Add the `e2e` project to `test.projects` in `apps/api/vitest.config.mts` (after the `unit` entry), and set `fileParallelism: false` on the root `test` options (Vitest 3 does not allow it per project):
 
-```json
-{
-  "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": "..",
-  "testRegex": "test/.*\\.e2e-spec\\.ts$",
-  "transform": { "^.+\\.ts$": "ts-jest" },
-  "testEnvironment": "node",
-  "setupFiles": ["<rootDir>/test/setup-env.ts"],
-  "globalSetup": "<rootDir>/test/global-setup.ts",
-  "moduleNameMapper": { "^@offwise/shared$": "<rootDir>/../../packages/shared/src" }
-}
+```ts
+    // The e2e project shares one test database, so test files run one at a time
+    // (not configurable per project in vitest 3).
+    fileParallelism: false,
+    projects: [
+      { extends: true, test: { name: 'unit', include: ['src/**/*.spec.ts'] } },
+      {
+        extends: true,
+        test: {
+          name: 'e2e',
+          include: ['test/**/*.e2e-spec.ts'],
+          setupFiles: ['test/setup-env.ts'],
+          globalSetup: ['test/global-setup.ts'],
+        },
+      },
+    ],
 ```
 
 `apps/api/test/health.e2e-spec.ts`:
@@ -1041,6 +1217,7 @@ export async function resetDatabase(dataSource: DataSource): Promise<void> {
 ```ts
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp } from './utils/create-test-app';
 
 describe('GET /api/health (e2e)', () => {
@@ -1068,6 +1245,7 @@ Next, the startup check for pending migrations. `apps/api/test/pending-migration
 ```ts
 import 'reflect-metadata';
 import { DataSource, type MigrationInterface } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import { buildDataSourceOptions } from '../src/database/typeorm-options';
 import { findPendingMigrations } from '../src/database/pending-migrations';
 import { TEST_DATABASE_URL } from './test-env';
@@ -1112,7 +1290,7 @@ describe('findPendingMigrations (e2e)', () => {
 ```
 
 Run: `pnpm --filter @offwise/api test:e2e`
-Expected: FAIL — `Cannot find module '../src/database/pending-migrations'`.
+Expected: FAIL — `../src/database/pending-migrations` cannot be resolved.
 
 `apps/api/src/database/pending-migrations.ts`:
 
@@ -1173,6 +1351,51 @@ export class DatabaseModule implements OnModuleInit {
 }
 ```
 
+Finally, the naming guard. It reads the real migrated schema, so it also catches hand-written migrations and explicit `name:` overrides. `apps/api/test/naming-convention.e2e-spec.ts`:
+
+```ts
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildDataSourceOptions } from '../src/database/typeorm-options';
+import { TEST_DATABASE_URL } from './test-env';
+
+const SNAKE_CASE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
+
+const notSnakeCase = (names: string[]): string[] =>
+  [...new Set(names)].filter((name) => !SNAKE_CASE.test(name)).sort();
+
+describe('database naming convention (e2e)', () => {
+  let dataSource: DataSource;
+
+  beforeAll(async () => {
+    dataSource = await new DataSource(buildDataSourceOptions(TEST_DATABASE_URL)).initialize();
+  });
+
+  afterAll(async () => {
+    await dataSource.destroy();
+  });
+
+  it('uses snake_case for every table and column in the migrated schema', async () => {
+    const rows: { table_name: string; column_name: string }[] = await dataSource.query(
+      `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(notSnakeCase(rows.flatMap((row) => [row.table_name, row.column_name]))).toEqual([]);
+  });
+
+  it('maps every entity to snake_case table and column names', () => {
+    const names = dataSource.entityMetadatas.flatMap((metadata) => [
+      metadata.tableName,
+      ...metadata.columns.map((column) => column.databaseName),
+    ]);
+    expect(notSnakeCase(names)).toEqual([]);
+  });
+});
+```
+
+The second case has no entities to check until Task 4; the first already checks the `migrations` table. To see the guard fail, temporarily run `ALTER TABLE migrations ADD COLUMN "badName" int` against `offwise_test` (`docker compose exec db psql -U offwise -d offwise_test -c '...'`), run `pnpm --filter @offwise/api test:e2e` (Expected: FAIL listing `badName`), then drop the column again.
+
 - [ ] **Step 8: Run everything**
 
 ```bash
@@ -1183,7 +1406,7 @@ pnpm --filter @offwise/api typecheck
 pnpm --filter @offwise/api start:dev   # in another terminal: curl -s localhost:3000/api/health
 ```
 
-Expected: e2e PASS (3 tests); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
+Expected: e2e PASS (5 tests); unit PASS; lint/typecheck exit 0; curl prints `{"status":"ok","db":"up"}`. Stop the dev server.
 
 - [ ] **Step 9: Hand over for human review (ADR 0004)**
 
@@ -1239,7 +1462,7 @@ export class InstallStepRecord {
   @PrimaryColumn({ type: 'varchar', length: 200, primaryKeyConstraintName: 'PK_install_steps' })
   name!: string;
 
-  @CreateDateColumn({ name: 'applied_at', type: 'timestamptz' })
+  @CreateDateColumn({ type: 'timestamptz' }) // -> applied_at via SnakeNamingStrategy
   appliedAt!: Date;
 }
 ```
@@ -1301,14 +1524,15 @@ Expected for the two commands: the first applies `CreateInstallSteps176031360000
 
 ```ts
 import type { DataSource } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { InstallStep } from './install-step';
 import { InstallStepRunner } from './install-step-runner.service';
 
-const step = (name: string): InstallStep => ({ name, run: jest.fn() });
+const step = (name: string): InstallStep => ({ name, run: vi.fn() });
 
 describe('InstallStepRunner', () => {
   it('rejects duplicate step names before touching the database', async () => {
-    const transaction = jest.fn();
+    const transaction = vi.fn();
     const runner = new InstallStepRunner({ transaction } as unknown as DataSource);
 
     await expect(runner.run([step('a.one'), step('a.one')])).rejects.toThrow(
@@ -1324,6 +1548,7 @@ describe('InstallStepRunner', () => {
 ```ts
 import type { INestApplication } from '@nestjs/common';
 import { DataSource, type EntityManager } from 'typeorm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstallStep } from '../src/install/install-step';
 import { InstallStepRecord } from '../src/install/install-step-record.entity';
 import { InstallStepRunner } from '../src/install/install-step-runner.service';
@@ -1371,8 +1596,8 @@ describe('InstallStepRunner (e2e)', () => {
   });
 
   it('runs only steps added since the last run', async () => {
-    const first: InstallStep = { name: 'test.first', run: jest.fn() };
-    const later: InstallStep = { name: 'test.later', run: jest.fn() };
+    const first: InstallStep = { name: 'test.first', run: vi.fn() };
+    const later: InstallStep = { name: 'test.later', run: vi.fn() };
 
     await runner.run([first]);
     await expect(runner.run([first, later])).resolves.toEqual(['test.later']);
@@ -1387,7 +1612,7 @@ describe('InstallStepRunner (e2e)', () => {
         throw new Error('boom');
       },
     };
-    const after: InstallStep = { name: 'test.after', run: jest.fn() };
+    const after: InstallStep = { name: 'test.after', run: vi.fn() };
 
     await expect(runner.run([failing, after])).rejects.toThrow('boom');
 
@@ -1398,7 +1623,7 @@ describe('InstallStepRunner (e2e)', () => {
 ```
 
 Run: `pnpm --filter @offwise/api test && pnpm --filter @offwise/api test:e2e`
-Expected: FAIL — `Cannot find module './install-step-runner.service'`.
+Expected: FAIL — `./install-step-runner.service` cannot be resolved.
 
 - [ ] **Step 3: Implement runner, registry and module**
 
@@ -1502,7 +1727,7 @@ pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
 ```
 
-Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health, 2 pending-migration and 3 install-step tests); lint/typecheck exit 0.
+Expected: unit PASS (incl. the duplicate-name test); e2e PASS (health, 2 pending-migration, 2 naming and 3 install-step tests); lint/typecheck exit 0.
 
 - [ ] **Step 5: Document the conventions in `apps/api/CLAUDE.md`**
 
@@ -1581,7 +1806,6 @@ pnpm --filter @offwise/web add -D vite@^6 @vitejs/plugin-vue@^5 typescript@~5.9 
     "jsx": "preserve",
     "noEmit": true,
     "types": ["vite/client", "node"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@offwise/shared": ["../../packages/shared/src/index.ts"]
@@ -1992,7 +2216,8 @@ git commit -m "feat(web): scaffold Vue app with Tailwind, shadcn-vue, i18n and A
 
 **Files:**
 - Create: `apps/web/.storybook/main.ts`, `apps/web/.storybook/preview.ts`
-- Create: `apps/web/src/features/system/components/ApiStatus.stories.ts`
+- Create: `apps/web/src/features/system/components/ApiStatus.stories.ts`, `apps/web/src/components/ui/badge/Badge.stories.ts`
+- Test: `apps/web/src/stories-coverage.spec.ts`
 - Modify: `apps/web/package.json` (scripts)
 
 **Interfaces:**
@@ -2067,6 +2292,71 @@ export const Loading: Story = { args: { state: 'loading' } };
 export const Unavailable: Story = { args: { state: 'error' } };
 ```
 
+- [ ] **Step 2b: Every component has a story (guard + Badge story)**
+
+Rule: every `.vue` file in `src/components/` (including the shadcn primitives in `src/components/ui/`) and in `src/features/*/components/` has a sibling `<Name>.stories.ts`. Pages and `App.vue` are excluded. Write the guard first. `apps/web/src/stories-coverage.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+
+// Lazy globs: only the file paths are used, nothing is imported.
+const components = Object.keys(
+  import.meta.glob(['./components/**/*.vue', './features/*/components/**/*.vue']),
+);
+const stories = new Set(
+  Object.keys(
+    import.meta.glob(['./components/**/*.stories.ts', './features/*/components/**/*.stories.ts']),
+  ),
+);
+
+describe('Storybook coverage', () => {
+  it('finds components to check', () => {
+    expect(components.length).toBeGreaterThan(0);
+  });
+
+  it('has a sibling <Name>.stories.ts for every component', () => {
+    const missing = components.filter((path) => !stories.has(path.replace(/\.vue$/, '.stories.ts')));
+    expect(missing).toEqual([]);
+  });
+});
+```
+
+Run: `pnpm --filter @offwise/web test`
+Expected: FAIL listing `./components/ui/badge/Badge.vue` (ApiStatus already has its story from Step 2).
+
+`apps/web/src/components/ui/badge/Badge.stories.ts` — one story per variant defined in `badgeVariants` (`src/components/ui/badge/index.ts`; currently `default`, `secondary`, `destructive`, `outline`, `ghost`, `link`), rendering a short label through the default slot:
+
+```ts
+import type { Meta, StoryObj } from '@storybook/vue3-vite';
+import { Badge } from '.';
+
+const meta = {
+  title: 'UI/Badge',
+  component: Badge,
+  args: { variant: 'default' },
+  render: (args) => ({
+    components: { Badge },
+    setup: () => ({ args }),
+    template: '<Badge v-bind="args">Badge</Badge>',
+  }),
+} satisfies Meta<typeof Badge>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = { args: { variant: 'default' } };
+export const Secondary: Story = { args: { variant: 'secondary' } };
+export const Destructive: Story = { args: { variant: 'destructive' } };
+export const Outline: Story = { args: { variant: 'outline' } };
+export const Ghost: Story = { args: { variant: 'ghost' } };
+export const Link: Story = { args: { variant: 'link' } };
+```
+
+The literal "Badge" label is demo content for the primitive, not app copy, so it does not go through i18n.
+
+Run: `pnpm --filter @offwise/web test`
+Expected: PASS.
+
 - [ ] **Step 3: Verify**
 
 ```bash
@@ -2076,197 +2366,172 @@ pnpm --filter @offwise/web typecheck
 pnpm --filter @offwise/web test
 ```
 
-Expected: `build-storybook` writes `apps/web/storybook-static` and exits 0; the rest exit 0. Optionally run `pnpm --filter @offwise/web storybook` and check that the three ApiStatus stories render with the theme colours and English text.
+Expected: `build-storybook` writes `apps/web/storybook-static` and exits 0; the rest exit 0. Optionally run `pnpm --filter @offwise/web storybook` and check that the three ApiStatus stories and the six Badge stories render with the theme colours.
 
 - [ ] **Step 4: Hand over for human review (ADR 0004)**
 
 Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git commit -m "feat(web): add Storybook with ApiStatus stories" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "feat(web): add Storybook with stories for every component" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Full stack in Docker Compose, docs and final verification
+### Task 7: Devcontainer, `pnpm dev`, docs and final verification
+
+Replaces the original "full stack in Docker Compose" task (ADR 0007): production images, nginx and the one-shot `migrate`/`install` compose services are deferred to a later deployment module.
 
 **Files:**
-- Create: `.dockerignore`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `apps/web/nginx.conf`
-- Modify: `docker-compose.yml`, `README.md`, `CLAUDE.md`
+- Create: `.devcontainer/devcontainer.json`, `.devcontainer/compose.yml`, `.devcontainer/post-create.sh`
+- Modify: `package.json` (root `dev` script), `apps/api/package.json` (`dev` script), `README.md`, `CLAUDE.md`, `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`
 
 **Interfaces:**
-- Consumes: everything above.
-- Produces: `docker compose up` serving the web app on http://localhost:8080 with `/api` proxied to the API; Mailpit UI on http://localhost:8025 (SMTP on 1025) ready for Module 1.
+- Consumes: root `docker-compose.yml` (`db` service + `docker/postgres/init`), the API's `migration:run`, `install:run`, `start:dev`, the web app's `dev`.
+- Produces: "Reopen in Container" gives a ready environment; `pnpm dev` runs API (3000) and web (5173); Storybook on 6006, Mailpit UI on 8025, all forwarded to the host.
 
-- [ ] **Step 1: Dockerfiles**
+- [ ] **Step 1: Root `dev` script**
 
-`.dockerignore`:
+`apps/api/package.json` scripts — add:
 
-```
-**/node_modules
-**/dist
-**/coverage
-**/storybook-static
-**/.env
-.git
+```json
+    "dev": "pnpm run start:dev"
 ```
 
-`apps/api/Dockerfile`:
+Root `package.json` scripts — add:
 
-```dockerfile
-FROM node:24-alpine AS build
-WORKDIR /repo
-RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/api/package.json apps/api/
-RUN pnpm install --frozen-lockfile --filter @offwise/api... --ignore-scripts
-COPY packages/shared packages/shared
-COPY apps/api apps/api
-RUN pnpm --filter @offwise/api build
-RUN pnpm --filter @offwise/api deploy --legacy --prod /out
-
-FROM node:24-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /out ./
-USER node
-EXPOSE 3000
-CMD ["node", "dist/main.js"]
+```json
+    "dev": "pnpm --parallel --filter @offwise/api --filter @offwise/web run dev"
 ```
 
-`apps/web/nginx.conf`:
+Verify on the host: `pnpm dev` starts both (`Nest application successfully started`, Vite `Local: http://localhost:5173/`); Ctrl+C stops both.
 
-```nginx
-server {
-  listen 80;
-  root /usr/share/nginx/html;
+- [ ] **Step 2: Devcontainer compose**
 
-  location /api/ {
-    proxy_pass http://api:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  location / {
-    try_files $uri $uri/ /index.html;
-  }
-}
-```
-
-`apps/web/Dockerfile`:
-
-```dockerfile
-FROM node:24-alpine AS build
-WORKDIR /repo
-RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @offwise/web... --ignore-scripts
-COPY packages/shared packages/shared
-COPY apps/web apps/web
-RUN pnpm --filter @offwise/web build
-
-FROM nginx:1.27-alpine
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
-```
-
-- [ ] **Step 2: Compose services**
-
-Replace `docker-compose.yml` with:
+`.devcontainer/compose.yml` (merged with the root `docker-compose.yml`, which provides `db`):
 
 ```yaml
 services:
   db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: offwise
-      POSTGRES_PASSWORD: offwise
-      POSTGRES_DB: offwise
-    ports:
-      - '5432:5432'
-    volumes:
-      - db-data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U offwise -d offwise']
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    # Reachable only inside the dev environment (workspace shares this network namespace);
+    # not published, so it never clashes with a Postgres on the host.
+    ports: !reset []
 
   mailpit:
     image: axllent/mailpit:v1.27
-    ports:
-      - '8025:8025' # web UI
-      - '1025:1025' # SMTP
+    network_mode: service:db
 
-  # One-shot migration command; never started by `docker compose up`.
-  # Run explicitly: docker compose run --rm migrate
-  migrate:
-    profiles: ['migrate']
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    command: ['node', 'dist/migrate.js']
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
+  workspace:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm
+    command: sleep infinity
+    # Same network namespace as db: localhost:5432 (db), :1025/:8025 (mailpit) work as on the host.
+    network_mode: service:db
     depends_on:
       db:
         condition: service_healthy
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
     environment:
-      NODE_ENV: production
-      PORT: 3000
-      LOG_LEVEL: info
-      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - '3000:3000'
-
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    depends_on:
-      - api
-    ports:
-      - '8080:80'
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+    volumes:
+      - ..:/workspaces/offwise:cached
+      # Linux node_modules and the pnpm store stay in volumes, never on the host disk.
+      - node_modules:/workspaces/offwise/node_modules
+      - api_node_modules:/workspaces/offwise/apps/api/node_modules
+      - web_node_modules:/workspaces/offwise/apps/web/node_modules
+      - shared_node_modules:/workspaces/offwise/packages/shared/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm
+      - claude_config:/home/node/.claude
 
 volumes:
-  db-data: {}
+  node_modules: {}
+  api_node_modules: {}
+  web_node_modules: {}
+  shared_node_modules: {}
+  pnpm_store: {}
+  claude_config: {}
 ```
 
-- [ ] **Step 3: Verify the stack**
+(`!reset` needs Docker Compose ≥ 2.24.)
+
+- [ ] **Step 3: devcontainer.json and post-create**
+
+`.devcontainer/devcontainer.json`:
+
+```json
+{
+  "name": "offwise",
+  "dockerComposeFile": ["../docker-compose.yml", "compose.yml"],
+  "service": "workspace",
+  "runServices": ["db", "mailpit", "workspace"],
+  "workspaceFolder": "/workspaces/offwise",
+  "remoteUser": "node",
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  "forwardPorts": [5173, 3000, 6006, 8025],
+  "portsAttributes": {
+    "5173": { "label": "web" },
+    "3000": { "label": "api" },
+    "6006": { "label": "storybook" },
+    "8025": { "label": "mailpit" }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "vitest.explorer",
+        "anthropic.claude-code"
+      ]
+    }
+  }
+}
+```
+
+`.devcontainer/post-create.sh` (executable):
 
 ```bash
-docker compose down -v
-docker compose build
-docker compose up -d
-docker compose logs api | grep "pending migration"
-docker compose run --rm migrate
-docker compose up -d
-docker compose logs api | grep -E "Nest application successfully started|Error"
-curl -s http://localhost:8080/api/health
-curl -s http://localhost:8080/ | grep -o '<title>offwise</title>'
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8025
-docker compose exec db psql -U offwise -d offwise -c '\dt'
+#!/usr/bin/env bash
+# Runs once when the devcontainer is created (ADR 0007).
+set -euo pipefail
+
+# Named volumes are created root-owned; hand them to the node user.
+sudo chown -R node:node \
+  node_modules apps/api/node_modules apps/web/node_modules packages/shared/node_modules \
+  /home/node/.local/share/pnpm /home/node/.claude
+
+sudo corepack enable
+CI=true pnpm install --frozen-lockfile
+
+[ -f apps/api/.env ] || cp apps/api/.env.example apps/api/.env
+
+# Wait for Postgres (shared network namespace: localhost).
+timeout 60 bash -c 'until (echo > /dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 1; done'
+
+# ADR 0006: explicit setup commands; after pulling new code, run them again yourself.
+pnpm --filter @offwise/api migration:run
+pnpm --filter @offwise/api install:run
+
+echo "offwise devcontainer ready: run 'pnpm dev' (web http://localhost:5173, api http://localhost:3000/api)"
 ```
 
-Expected: on the first `up` the api container exits with `Database has 1 pending migration(s)` (the API does not migrate itself); `migrate` prints `Applied migrations: CreateInstallSteps1760313600000`; after the second `up` the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations`. Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
+- [ ] **Step 4: Verify with the devcontainer CLI**
 
-If the API image fails at `deploy` because `dist` is missing from `/out`, check `"files": ["dist"]` in both `apps/api/package.json` and `packages/shared/package.json`.
+From the repo root on the host:
 
-- [ ] **Step 4: Docs**
+```bash
+npx -y @devcontainers/cli up --workspace-folder .
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc 'node -v && pnpm -v && claude --version'
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc 'pnpm -r lint && pnpm -r typecheck && pnpm -r test && pnpm --filter @offwise/api test:e2e && pnpm --filter @offwise/web build-storybook && pnpm format:check'
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc '(pnpm dev > /tmp/dev.log 2>&1 &) ; sleep 15; curl -s localhost:3000/api/health; curl -s localhost:5173/api/health; grep -E "successfully started|Local:" /tmp/dev.log'
+```
+
+Expected: Node v24, pnpm 10, a Claude Code version; every check exits 0; both curls print `{"status":"ok","db":"up"}`. Then confirm the host is untouched: `ls node_modules/.pnpm | head -1` on the host shows the host's own install (the container's lives in volumes), and the host's `db` container (if running) still owns port 5432.
+
+Tear down: `docker compose -p offwise_devcontainer down -v` (use the project name printed by `devcontainer up`, or `docker compose ls`).
+
+- [ ] **Step 5: Docs**
 
 `README.md`:
 
@@ -2275,66 +2540,39 @@ If the API image fails at `deploy` because `dist` is missing from `/out`, check 
 
 Time off, made simple. A self-hostable leave management app.
 
-## Run the whole stack
+## Develop (devcontainer)
 
-```bash
-docker compose build
-docker compose run --rm migrate    # migrations never run automatically; repeat after every upgrade
-docker compose up
-```
+Requires Docker and VS Code (or Cursor) with the Dev Containers extension, or the devcontainer CLI.
 
-- App: http://localhost:8080
-- API health: http://localhost:8080/api/health
-- Mailpit (dev mail inbox): http://localhost:8025
+1. Open the repo and choose **Reopen in Container**. The first start installs dependencies, creates `apps/api/.env`, and runs migrations and install steps.
+2. Run `pnpm dev` in the container terminal.
+   - Web: http://localhost:5173
+   - API: http://localhost:3000/api (health: `/api/health`)
+   - Mailpit (dev mail inbox): http://localhost:8025
+   - Storybook: `pnpm --filter @offwise/web storybook` → http://localhost:6006
+3. After pulling new code: `pnpm install`, `pnpm --filter @offwise/api migration:run`, `pnpm --filter @offwise/api install:run` (the API never runs them itself).
 
-## Develop
-
-Requires Node 24 and pnpm 10 (`corepack enable`).
-
-```bash
-pnpm install                                  # also builds @offwise/shared
-docker compose up -d db mailpit
-cp apps/api/.env.example apps/api/.env
-pnpm --filter @offwise/api migration:run      # the API refuses to start with pending migrations
-pnpm --filter @offwise/api start:dev          # http://localhost:3000/api
-pnpm --filter @offwise/web dev                # http://localhost:5173 (proxies /api)
-```
+Tear down: delete the container and its volumes (VS Code: *Dev Containers: Clean Up Dev Volumes*, or `docker compose ls` then `docker compose -p <project> down -v`).
 
 Checks: `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm --filter @offwise/api test:e2e`, `pnpm --filter @offwise/web build-storybook`.
+
+Without the devcontainer: Node 24, pnpm 10 (`corepack enable`), `docker compose up -d db`, then the same commands.
 
 See `CLAUDE.md` for conventions and `docs/` for specs, plans and decisions.
 ````
 
-In root `CLAUDE.md`, replace the heading `## Commands (once scaffolded)` with `## Commands`, and add one line to the code block after `pnpm install`:
+Root `CLAUDE.md`: in the commands block replace `docker compose up                  # start web, api, and postgres` with `pnpm dev                           # api + web dev servers (inside the devcontainer)`, change the e2e comment to `# API e2e (needs postgres: devcontainer or docker compose up -d db)`, replace the heading `## Commands (once scaffolded)` with `## Commands`, and add under the repo layout: "Development runs in the devcontainer (`.devcontainer/`, ADR 0007); Claude Code runs inside it." Drop `(once scaffolded)` from the `## Commands` headings in `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md`.
 
-```bash
-docker compose up -d db mailpit    # just the dependencies, for running api/web locally
-```
+- [ ] **Step 6: Final verification**
 
-Also drop `(once scaffolded)` from the `## Commands` headings in `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md`.
+Inside the devcontainer (Step 4 commands) and on the host after `pnpm install`: `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm --filter @offwise/api test:e2e` (host: with `docker compose up -d db`), `pnpm --filter @offwise/web build-storybook`, `pnpm format:check`. Every command exits 0; read the output and report any failure instead of claiming success.
 
-- [ ] **Step 5: Final verification from a clean install**
-
-```bash
-rm -rf node_modules apps/*/node_modules packages/*/node_modules packages/shared/dist
-pnpm install
-docker compose up -d db
-pnpm -r lint
-pnpm -r typecheck
-pnpm -r test
-pnpm --filter @offwise/api test:e2e
-pnpm --filter @offwise/web build-storybook
-pnpm format:check
-```
-
-Expected: every command exits 0. If only `format:check` fails, run `pnpm -r format`, review the diff, and re-run. Read the output; report any failure instead of claiming success.
-
-- [ ] **Step 6: Hand over for human review (ADR 0004)**
+- [ ] **Step 7: Hand over for human review (ADR 0004)**
 
 Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git commit -m "chore: run full stack with docker compose; document dev workflow" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "chore: devcontainer for local development (ADR 0007); pnpm dev" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2344,11 +2582,12 @@ git commit -m "chore: run full stack with docker compose; document dev workflow"
 | Spec item | Task |
 | --- | --- |
 | pnpm workspaces, Nest and Vue apps, `@offwise/shared` | 1, 2, 5 |
-| docker compose with `db`, `api`, `web`, Mailpit | 3, 7 |
+| docker compose `db`; devcontainer with `db`, Mailpit and `pnpm dev` (ADR 0007; deployable images deferred) | 3, 7 |
 | Env validation (`NODE_ENV`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`), `.env.example` | 2, 3 |
-| TypeORM data source and migrations, shared options; no automatic migrations, startup refuses pending migrations | 3, 7 |
+| TypeORM data source and migrations, shared options; migrate and install as explicit commands, no startup checks (ADR 0006) | 3, 4, 7 |
 | Install-step runner (`install_steps`, once per installation, after migrations) | 4 |
 | Health endpoint | 3 |
+| snake_case table and column names (naming strategy + schema guard) | 3 |
 | vue-i18n with English only | 5 |
 | Required scripts in every workspace; Storybook | 1, 2, 3, 5, 6 |
 | E2E test-data isolation (ADR 0001 consequence) | 3 |

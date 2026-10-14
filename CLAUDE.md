@@ -17,17 +17,19 @@ docs/decisions/    ADRs             NNNN-<title>.md (see docs/decisions/README.m
 
 TypeScript everywhere. ESLint and Prettier. ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
 
-## Commands (once scaffolded)
+Development runs in the devcontainer (`.devcontainer/`, ADR 0007); Claude Code runs inside it.
+
+## Commands
 
 ```bash
 pnpm install                       # install all workspaces
-docker compose up                  # start web, api, and postgres
+pnpm dev                           # api + web dev servers (inside the devcontainer)
 pnpm -r lint                       # lint everything
 pnpm -r typecheck                  # typecheck everything
 pnpm -r test                       # unit tests everywhere
 pnpm -r format                     # prettier
 pnpm --filter @offwise/web storybook   # component review
-pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres from docker compose)
+pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres: devcontainer or docker compose up -d db)
 ```
 
 Scaffolding must define `lint`, `typecheck`, `test` and `format` in every workspace; `test:e2e`, `migration:generate` and `migration:run` in api; and `storybook` and `build-storybook` in web. It must also define a compose service named `db`, because the agents depend on these names.

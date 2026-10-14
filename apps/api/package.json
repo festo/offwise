@@ -1,0 +1,62 @@
+{
+  "name": "@offwise/api",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @offwise/shared build && nest build",
+    "start": "node dist/main.js",
+    "dev": "pnpm run start:dev",
+    "start:dev": "pnpm --filter @offwise/shared build && nest start --watch",
+    "lint": "eslint .",
+    "typecheck": "pnpm --filter @offwise/shared build && tsc -p tsconfig.json",
+    "test": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e",
+    "migration:generate": "sh -c 'typeorm-ts-node-commonjs -d src/data-source.ts migration:generate src/migrations/$0'",
+    "migration:create": "sh -c 'typeorm-ts-node-commonjs migration:create src/migrations/$0'",
+    "migration:run": "typeorm-ts-node-commonjs -d src/data-source.ts migration:run",
+    "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert",
+    "migration:run:dist": "node dist/migrate.js",
+    "install:run": "ts-node src/install.ts",
+    "install:run:dist": "node dist/install.js",
+    "format": "prettier --write . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11",
+    "@nestjs/config": "^4",
+    "@nestjs/core": "^11",
+    "@nestjs/platform-express": "^11",
+    "@nestjs/typeorm": "^11.0.3",
+    "@offwise/shared": "workspace:*",
+    "change-case": "^5.4.4",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "dotenv": "^18.0.7",
+    "pg": "^8.23.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.31",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@nestjs/cli": "^11",
+    "@nestjs/schematics": "^11",
+    "@nestjs/testing": "^11",
+    "@swc/core": "^1.16.18",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24",
+    "@types/supertest": "^7.2.1",
+    "eslint": "^9",
+    "eslint-config-prettier": "^10",
+    "globals": "^17.13.0",
+    "supertest": "^7.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9",
+    "typescript-eslint": "^8",
+    "unplugin-swc": "^2.0.0",
+    "vitest": "^3.2.7"
+  }
+}

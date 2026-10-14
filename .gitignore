@@ -25,3 +25,6 @@ lerna-debug.log*
 
 # Claude Code personal overrides
 .claude/settings.local.json
+
+# Playwright MCP snapshots, console logs and screenshots
+.playwright-mcp/
