@@ -10,6 +10,9 @@ sudo chown -R node:node \
 sudo corepack enable
 CI=true pnpm install --frozen-lockfile
 
+# ADR 0008: headless Chromium (and its system libraries) for the Playwright MCP server in .mcp.json.
+pnpm exec playwright-mcp install-browser --with-deps --no-shell --no-progress chrome-for-testing
+
 [ -f apps/api/.env ] || cp apps/api/.env.example apps/api/.env
 
 # Wait for Postgres (shared network namespace: localhost).

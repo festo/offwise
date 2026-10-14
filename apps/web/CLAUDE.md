@@ -33,6 +33,10 @@ pnpm --filter @offwise/web build-storybook    # must pass before done
 - Cover the meaningful states: default, loading, empty, error, and disabled where relevant.
 - Stories use static props or mocked data; no real network calls.
 
+## Checking in a browser
+
+The `playwright` MCP server (`.mcp.json`, ADR 0008) drives a headless Chromium inside the devcontainer. With `pnpm dev` running, open http://localhost:5173 to check a page, its console errors and failed requests; use it to diagnose a UI bug before guessing at the fix. Snapshots and screenshots land in `.playwright-mcp/` (gitignored). It complements tests and Storybook; it does not replace them.
+
 ## Accessibility
 
 Semantic elements, labelled form controls, full keyboard operability, visible focus states. Prefer the shadcn-vue (Reka UI) primitives, which handle ARIA for dialogs, menus, and popovers.
