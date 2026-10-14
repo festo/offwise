@@ -1,0 +1,13 @@
+{
+  "app": {
+    "name": "offwise",
+    "tagline": "Time off, made simple."
+  },
+  "system": {
+    "apiStatus": {
+      "loading": "Checking API…",
+      "ok": "API connected",
+      "error": "API unavailable"
+    }
+  }
+}
