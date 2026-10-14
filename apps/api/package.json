@@ -14,9 +14,12 @@
     "test": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e",
     "migration:generate": "sh -c 'typeorm-ts-node-commonjs -d src/data-source.ts migration:generate src/migrations/$0'",
+    "migration:create": "sh -c 'typeorm-ts-node-commonjs migration:create src/migrations/$0'",
     "migration:run": "typeorm-ts-node-commonjs -d src/data-source.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d src/data-source.ts migration:revert",
     "migration:run:dist": "node dist/migrate.js",
+    "install:run": "ts-node src/install.ts",
+    "install:run:dist": "node dist/install.js",
     "format": "prettier --write . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore"
   },
   "dependencies": {
