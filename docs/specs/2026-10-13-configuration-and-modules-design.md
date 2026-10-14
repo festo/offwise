@@ -12,7 +12,7 @@ Before writing application code, agree on two things for offwise, based on the p
 
 Each module in the roadmap gets its own spec, plan and implementation cycle on its own branch. This document does not design any module in detail.
 
-Related ADRs: 0002 (server-side sessions), 0003 (settings and install steps), 0006 (migrations and install as explicit commands), 0007 (devcontainer for development).
+Related ADRs: 0002 (server-side sessions in Redis), 0003 (settings and install steps), 0006 (migrations and install as explicit commands), 0007 (devcontainer for development).
 
 ## Part 1: Configuration model
 
@@ -35,6 +35,7 @@ Validated at API startup. A missing or invalid value stops the process with a cl
 | `PORT` | no (default 3000) | API port | 0 |
 | `LOG_LEVEL` | no (default `info`) | log verbosity | 0 |
 | `DATABASE_URL` | yes | PostgreSQL connection string | 0 |
+| `REDIS_URL` | yes | Redis connection string for sessions and login throttling (ADR 0002) | 1 |
 | `PUBLIC_URL` | yes | Public web origin; used for email links, OIDC redirect URI, iCal URLs and cookie settings | 1 |
 | `SESSION_SECRET` | yes | Signs the session cookie | 1 |
 | `ENCRYPTION_KEY` | yes | 32-byte key (base64) that encrypts secrets stored in the DB (OIDC client secret, Slack token) | 1 |
@@ -162,5 +163,5 @@ Not part of the roadmap; to be specified when prioritized:
 | Seeding | Named, once-per-installation install steps recorded in `install_steps` | ADR 0003 |
 | When setup runs | Migrate, install and start are three explicit operator steps; the API checks and runs neither | ADR 0006 |
 | Admin settings storage | Namespaced `jsonb` settings with module-owned DTOs and code defaults | ADR 0003 |
-| Web sessions | Server-side sessions in PostgreSQL, opaque id in an httpOnly secure cookie | ADR 0002 |
+| Web sessions | Server-side sessions in Redis (AOF persistence), opaque id in an httpOnly secure cookie | ADR 0002 |
 | Module order | Org structure (2) before access control (3) | this spec |
