@@ -6,7 +6,7 @@ Vue 3 SPA for offwise. Read the root `CLAUDE.md` first.
 
 Vue 3 (Composition API), Vite, TypeScript, Tailwind, shadcn-vue (https://github.com/unovue/shadcn-vue), Storybook, Vitest + Vue Test Utils.
 
-## Commands (once scaffolded)
+## Commands
 
 ```bash
 pnpm --filter @offwise/web dev

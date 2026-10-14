@@ -1,0 +1,44 @@
+# Own project name: never share containers or the db-data volume with the host's `docker compose up -d db`.
+name: offwise-devcontainer
+
+services:
+  db:
+    # Reachable only inside the dev environment (workspace shares this network namespace);
+    # not published, so it never clashes with a Postgres on the host.
+    ports: !reset []
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    network_mode: service:db
+
+  workspace:
+    image: mcr.microsoft.com/devcontainers/typescript-node:4-24-bookworm
+    command: sleep infinity
+    # Same network namespace as db: localhost:5432 (db), :1025/:8025 (mailpit) work as on the host.
+    network_mode: service:db
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      # Without this pnpm falls back to <repo>/.pnpm-store (the store volume is on another device than the repo).
+      npm_config_store_dir: /home/node/.local/share/pnpm/store
+      pnpm_config_store_dir: /home/node/.local/share/pnpm/store
+    volumes:
+      # Relative paths resolve against the project directory (the root docker-compose.yml), not this file.
+      - .:/workspaces/offwise:cached
+      # Linux node_modules and the pnpm store stay in volumes, never on the host disk.
+      - node_modules:/workspaces/offwise/node_modules
+      - api_node_modules:/workspaces/offwise/apps/api/node_modules
+      - web_node_modules:/workspaces/offwise/apps/web/node_modules
+      - shared_node_modules:/workspaces/offwise/packages/shared/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm
+      - claude_config:/home/node/.claude
+
+volumes:
+  node_modules: {}
+  api_node_modules: {}
+  web_node_modules: {}
+  shared_node_modules: {}
+  pnpm_store: {}
+  claude_config: {}

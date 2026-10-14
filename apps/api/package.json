@@ -8,6 +8,7 @@
   "scripts": {
     "build": "pnpm --filter @offwise/shared build && nest build",
     "start": "node dist/main.js",
+    "dev": "pnpm run start:dev",
     "start:dev": "pnpm --filter @offwise/shared build && nest start --watch",
     "lint": "eslint .",
     "typecheck": "pnpm --filter @offwise/shared build && tsc -p tsconfig.json",

@@ -6,7 +6,7 @@ NestJS REST API for offwise, backed by PostgreSQL. Read the root `CLAUDE.md` fir
 
 NestJS, TypeScript, PostgreSQL, class-validator / class-transformer (request DTOs), zod (env config), Vitest + supertest (see `docs/decisions/0005-vitest-and-zod.md`). ORM: TypeORM (see `docs/decisions/0001-use-typeorm.md`).
 
-## Commands (once scaffolded)
+## Commands
 
 ```bash
 docker compose up -d db                 # postgres for local dev and e2e
