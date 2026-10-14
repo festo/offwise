@@ -2215,7 +2215,8 @@ git commit -m "feat(web): scaffold Vue app with Tailwind, shadcn-vue, i18n and A
 
 **Files:**
 - Create: `apps/web/.storybook/main.ts`, `apps/web/.storybook/preview.ts`
-- Create: `apps/web/src/features/system/components/ApiStatus.stories.ts`
+- Create: `apps/web/src/features/system/components/ApiStatus.stories.ts`, `apps/web/src/components/ui/badge/Badge.stories.ts`
+- Test: `apps/web/src/stories-coverage.spec.ts`
 - Modify: `apps/web/package.json` (scripts)
 
 **Interfaces:**
@@ -2290,6 +2291,71 @@ export const Loading: Story = { args: { state: 'loading' } };
 export const Unavailable: Story = { args: { state: 'error' } };
 ```
 
+- [ ] **Step 2b: Every component has a story (guard + Badge story)**
+
+Rule: every `.vue` file in `src/components/` (including the shadcn primitives in `src/components/ui/`) and in `src/features/*/components/` has a sibling `<Name>.stories.ts`. Pages and `App.vue` are excluded. Write the guard first. `apps/web/src/stories-coverage.spec.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+
+// Lazy globs: only the file paths are used, nothing is imported.
+const components = Object.keys(
+  import.meta.glob(['./components/**/*.vue', './features/*/components/**/*.vue']),
+);
+const stories = new Set(
+  Object.keys(
+    import.meta.glob(['./components/**/*.stories.ts', './features/*/components/**/*.stories.ts']),
+  ),
+);
+
+describe('Storybook coverage', () => {
+  it('finds components to check', () => {
+    expect(components.length).toBeGreaterThan(0);
+  });
+
+  it('has a sibling <Name>.stories.ts for every component', () => {
+    const missing = components.filter((path) => !stories.has(path.replace(/\.vue$/, '.stories.ts')));
+    expect(missing).toEqual([]);
+  });
+});
+```
+
+Run: `pnpm --filter @offwise/web test`
+Expected: FAIL listing `./components/ui/badge/Badge.vue` (ApiStatus already has its story from Step 2).
+
+`apps/web/src/components/ui/badge/Badge.stories.ts` — one story per variant defined in `badgeVariants` (`src/components/ui/badge/index.ts`; currently `default`, `secondary`, `destructive`, `outline`, `ghost`, `link`), rendering a short label through the default slot:
+
+```ts
+import type { Meta, StoryObj } from '@storybook/vue3-vite';
+import { Badge } from '.';
+
+const meta = {
+  title: 'UI/Badge',
+  component: Badge,
+  args: { variant: 'default' },
+  render: (args) => ({
+    components: { Badge },
+    setup: () => ({ args }),
+    template: '<Badge v-bind="args">Badge</Badge>',
+  }),
+} satisfies Meta<typeof Badge>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = { args: { variant: 'default' } };
+export const Secondary: Story = { args: { variant: 'secondary' } };
+export const Destructive: Story = { args: { variant: 'destructive' } };
+export const Outline: Story = { args: { variant: 'outline' } };
+export const Ghost: Story = { args: { variant: 'ghost' } };
+export const Link: Story = { args: { variant: 'link' } };
+```
+
+The literal "Badge" label is demo content for the primitive, not app copy, so it does not go through i18n.
+
+Run: `pnpm --filter @offwise/web test`
+Expected: PASS.
+
 - [ ] **Step 3: Verify**
 
 ```bash
@@ -2299,14 +2365,14 @@ pnpm --filter @offwise/web typecheck
 pnpm --filter @offwise/web test
 ```
 
-Expected: `build-storybook` writes `apps/web/storybook-static` and exits 0; the rest exit 0. Optionally run `pnpm --filter @offwise/web storybook` and check that the three ApiStatus stories render with the theme colours and English text.
+Expected: `build-storybook` writes `apps/web/storybook-static` and exits 0; the rest exit 0. Optionally run `pnpm --filter @offwise/web storybook` and check that the three ApiStatus stories and the six Badge stories render with the theme colours.
 
 - [ ] **Step 4: Hand over for human review (ADR 0004)**
 
 Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git commit -m "feat(web): add Storybook with ApiStatus stories" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "feat(web): add Storybook with stories for every component" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---

@@ -29,7 +29,7 @@ pnpm --filter @offwise/web build-storybook    # must pass before done
 
 ## Storybook
 
-- Every new or changed presentational component has a co-located `<Component>.stories.ts` (CSF3).
+- Every component has a co-located `<Component>.stories.ts` (CSF3): everything in `src/components/` (including shadcn primitives in `src/components/ui/`, one story per variant) and in `src/features/*/components/`. Pages and `App.vue` are excluded. `src/stories-coverage.spec.ts` fails on any component without a story, so adding a shadcn primitive with the CLI means adding its story in the same change.
 - Cover the meaningful states: default, loading, empty, error, and disabled where relevant.
 - Stories use static props or mocked data; no real network calls.
 

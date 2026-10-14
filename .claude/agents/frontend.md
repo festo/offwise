@@ -10,7 +10,7 @@ Before writing anything, read `CLAUDE.md` (repo root) and `apps/web/CLAUDE.md`, 
 How you work:
 1. Follow TDD: write a failing Vitest test, make it pass, then refactor.
 2. Reach for shadcn-vue primitives before writing custom ones.
-3. Every new or changed presentational component gets a `*.stories.ts` covering its main states (default, loading, empty, error, disabled where relevant).
+3. Every component you add or change gets a `*.stories.ts` covering its main states (default, loading, empty, error, disabled where relevant), including shadcn primitives added with the CLI (one story per variant). `src/stories-coverage.spec.ts` enforces it.
 4. Use types from `@offwise/shared` for API data. If a contract you need is missing, stop and report it instead of inventing it locally.
 5. Check basic accessibility: semantic markup, labels, keyboard operability, focus states.
 6. Stay inside your task's scope. No drive-by refactors.
