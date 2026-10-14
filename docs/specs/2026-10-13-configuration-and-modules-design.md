@@ -12,7 +12,7 @@ Before writing application code, agree on two things for offwise, based on the p
 
 Each module in the roadmap gets its own spec, plan and implementation cycle on its own branch. This document does not design any module in detail.
 
-Related ADRs: 0002 (server-side sessions), 0003 (settings and install steps).
+Related ADRs: 0002 (server-side sessions), 0003 (settings and install steps), 0006 (migrations and install as explicit commands).
 
 ## Part 1: Configuration model
 
@@ -80,7 +80,8 @@ Modules ship one at a time, so a single "installed" marker would miss the defaul
 
 - Each module registers named install steps, e.g. `org.root-team`.
 - Each step that has run is recorded in an `install_steps` table (name, applied at).
-- Migrations never run automatically. An operator runs them with an explicit command (`migration:run` in development, `docker compose run --rm migrate` for containers). On startup the API refuses to start while migrations are pending, then the runner executes every unrecorded step in registration order. Each step runs in its own transaction together with its record row.
+- Neither migrations nor install steps run automatically, and the API does not check for either (ADR 0006). The operator runs them before starting the API: migrations with `migration:run` (development) or `docker compose run --rm migrate` (containers), then install steps with `install:run` or `docker compose run --rm install`.
+- The install command executes every unrecorded step in registration order. Each step runs in its own transaction together with its record row; concurrent runs are serialised by an advisory lock.
 - A step runs **exactly once per installation**. An existing installation that upgrades to a new module gets that module's defaults once. Defaults an admin later edits or deletes are never recreated.
 - Steps live in typed TypeScript files next to their module and are unit-tested.
 
@@ -97,7 +98,7 @@ No holiday groups are seeded, because the app does not assume a country.
 
 ### First-admin bootstrap
 
-This is a check on every startup, separate from install steps:
+This runs in the install command (ADR 0006), after the install steps:
 
 - If `INITIAL_ADMIN_EMAIL` is set **and no active admin exists**, create an active admin with that email.
 - With `INITIAL_ADMIN_PASSWORD`, that password is set. Without it, a one-time password-setup link is written to the log.
@@ -115,7 +116,7 @@ Every module is a complete vertical slice: API, web UI including admin screens, 
 
 | # | Module | Scope | Depends on |
 | --- | --- | --- | --- |
-| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; docker compose (`db`, `api`, `web`, Mailpit); env validation; TypeORM data source and migrations (explicit command only; the API refuses to start with pending migrations); install-step runner; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
+| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; docker compose (`db`, `api`, `web`, Mailpit); env validation; TypeORM data source and migrations (explicit command only); install-step runner and `install` command (ADR 0006); no startup checks in the API; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
 | 1 | Identity & login | Users (name, email, role, language, time zone, status); password hashing; server-side sessions; login and logout; password reset by email; first-admin bootstrap; settings infrastructure; audit log foundation (append-only, used by every later module); admin user management (add, edit, close, set role); private-page shell in the web app. Temporary authorization: "signed in" and "is admin" only | 0 |
 | 2 | Org structure | Team tree; team managers, who may belong to a different team; membership with history, so moves keep history; manager-chain resolution; `org.root-team` step; admin UI for the tree | 1 |
 | 3 | Access control | Roles (Employee, Manager, HR/Admin, Auditor) mapped to permissions with scopes (own, managed subtree, company); Auditor read-only; replaces the temporary guards from module 1; route and menu guards in the web app | 2 |
@@ -158,6 +159,7 @@ Not part of the roadmap; to be specified when prioritized:
 | Integration credentials | SMTP in env; SSO and Slack in DB settings, encrypted with `ENCRYPTION_KEY` | this spec |
 | First admin | `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD`, applied only when no active admin exists | this spec |
 | Seeding | Named, once-per-installation install steps recorded in `install_steps` | ADR 0003 |
+| When setup runs | Migrate, install and start are three explicit operator steps; the API checks and runs neither | ADR 0006 |
 | Admin settings storage | Namespaced `jsonb` settings with module-owned DTOs and code defaults | ADR 0003 |
 | Web sessions | Server-side sessions in PostgreSQL, opaque id in an httpOnly secure cookie | ADR 0002 |
 | Module order | Org structure (2) before access control (3) | this spec |

@@ -1,6 +1,6 @@
 # 0003: Namespaced DB settings and once-per-installation install steps
 
-**Status:** Accepted
+**Status:** Accepted; when install steps run is superseded by 0006
 **Date:** 2026-10-13
 
 ## Context

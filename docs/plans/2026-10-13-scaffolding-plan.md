@@ -4,7 +4,7 @@
 
 **Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install-step runner and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and `docker compose up` running the whole stack.
 
-**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with class-validator at startup, shares one TypeORM options builder between Nest and the TypeORM CLI, never runs migrations itself (it refuses to start while migrations are pending), and runs pending install steps on boot. The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0003.
+**Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with zod at startup and shares one TypeORM options builder with the TypeORM CLI. It neither runs nor checks migrations and install steps; those are explicit operator commands (`migrate`, `install`) run before the API starts (ADR 0006). The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0006.
 
 **Tech Stack:** Node 24, pnpm 10, TypeScript ~5.9, NestJS 11, TypeORM 0.3, PostgreSQL 17, Vitest 3 (API via unplugin-swc) + supertest, zod 4 (env validation), Vue 3.5, Vite 6, Tailwind 4, shadcn-vue, vue-i18n 11, Vitest 3, Storybook 9, Docker Compose, nginx.
 
@@ -21,12 +21,21 @@
 - All database table and column names are snake_case. `SnakeNamingStrategy` derives them from class and property names; explicit `name:` overrides are kept verbatim and must themselves be snake_case. An e2e guard checks the migrated schema.
 - Configs must be clean under TypeScript 6 (the editor's version): no `moduleResolution: node`/`node10`, no `baseUrl`, `rootDir` set wherever `outDir` is. ESLint configs use `defineConfig` from `eslint/config`, not the deprecated `tseslint.config()`.
 - Module 0 env vars only: `NODE_ENV`, `PORT` (default 3000), `LOG_LEVEL` (default `info`), `DATABASE_URL`. Validated at startup; invalid config stops the process. Documented in `apps/api/.env.example`.
-- The API never runs migrations automatically. Migrations run only through an explicit command: `migration:run` (dev, TypeScript) or `migration:run:dist` / `docker compose run --rm migrate` (built code). On startup the API checks for pending migrations and refuses to start if there are any.
+- ADR 0006: migrations and install steps run only through explicit commands — `migration:run` / `migration:run:dist` / `docker compose run --rm migrate`, and `install:run` / `install:run:dist` / `docker compose run --rm install`. The API neither runs nor checks either; deploy = migrate, install, start.
+- Migrations are discovered by glob (`src/migrations/*{.ts,.js}`), never under Vitest (TypeORM's own `require` bypasses SWC); e2e setup migrates `offwise_test` through the CLI. Migrations are always generated or created by the TypeORM CLI (`.claude/skills/typeorm-migrations/SKILL.md`).
 - TypeORM: `synchronize: false` always; `migrationsRun` is never set; data source file is `apps/api/src/data-source.ts`; migrations live in `apps/api/src/migrations/`; Nest and the CLI share one options builder.
 - The web app has no runtime env; it calls `/api` on its own origin.
 - Workspace `format` scripts run Prettier from the workspace directory, so they pass the root `.gitignore` and `.prettierignore` explicitly with `--ignore-path`.
 - vue-i18n is wired with English only; every user-visible string goes through `t()`.
 - Leave dates and domain logic are out of scope for this module.
+
+## Amendments after execution
+
+Decisions made while Tasks 3–4 were being implemented. Task text below for those tasks is kept as originally written; where it conflicts, this section wins.
+
+- **Migrations by glob, not an array** (Task 3/4): `src/migrations/index.ts` is gone; `buildDataSourceOptions` uses `src/migrations/*{.ts,.js}` except under Vitest (`[]`); `test/global-setup.ts` runs `migration:run` through the CLI against `offwise_test`; `migration:create` script added.
+- **CLI-generated migration** (Task 4): the hand-written `1760313600000-CreateInstallSteps.ts` was replaced by the CLI-generated `1791956603819-CreateInstallSteps.ts`.
+- **No startup checks; explicit install command** (ADR 0006): the pending-migration check (`findPendingMigrations`, `DatabaseModule.onModuleInit`, their tests) is removed. `InstallModule` no longer runs steps on bootstrap. `src/install.ts` (dev: `install:run`, built: `install:run:dist`) applies pending install steps from a Nest application context; compose gets a one-shot `install` service next to `migrate`.
 
 ## Agent routing
 
@@ -52,15 +61,15 @@ apps/api/
   src/app.module.ts                 root module
   src/app.setup.ts                  configureApp(): prefix + ValidationPipe (shared with e2e)
   src/config/env.validation.ts      zod envSchema, EnvironmentVariables + validateEnv()
+  src/config/app-config.module.ts   AppConfigModule (ConfigModule.forRoot, shared by API and install command)
   src/config/log-levels.ts          LOG_LEVEL → Nest logger levels
   src/database/typeorm-options.ts   buildDataSourceOptions() — the one options object
   src/database/snake-naming.strategy.ts  snake_case table/column names
   src/database/entities.ts          explicit entity list
-  src/database/database.module.ts   TypeOrmModule.forRootAsync + pending-migration check on init
-  src/database/pending-migrations.ts findPendingMigrations()
-  src/migrations/index.ts           explicit migration list
-  src/migrations/1760313600000-CreateInstallSteps.ts
+  src/database/database.module.ts   TypeOrmModule.forRootAsync
+  src/migrations/1791956603819-CreateInstallSteps.ts  CLI-generated; migrations are found by glob
   src/data-source.ts                TypeORM CLI data source
+  src/install.ts                    explicit install command (Nest application context, ADR 0006)
   src/migrate.ts                    explicit migration command for built code (containers)
   src/health/                       GET /api/health
   src/install/                      install-step contract, record entity, runner, registry, module
@@ -2432,6 +2441,21 @@ services:
       db:
         condition: service_healthy
 
+  # One-shot install command (seeds install steps); never started by `docker compose up`.
+  # Run explicitly after migrate: docker compose run --rm install
+  install:
+    profiles: ['install']
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ['node', 'dist/install.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -2465,9 +2489,8 @@ volumes:
 ```bash
 docker compose down -v
 docker compose build
-docker compose up -d
-docker compose logs api | grep "pending migration"
 docker compose run --rm migrate
+docker compose run --rm install
 docker compose up -d
 docker compose logs api | grep -E "Nest application successfully started|Error"
 curl -s http://localhost:8080/api/health
@@ -2476,7 +2499,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8025
 docker compose exec db psql -U offwise -d offwise -c '\dt'
 ```
 
-Expected: on the first `up` the api container exits with `Database has 1 pending migration(s)` (the API does not migrate itself); `migrate` prints `Applied migrations: CreateInstallSteps1760313600000`; after the second `up` the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations`. Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
+Expected: `migrate` prints `Applied migrations: CreateInstallSteps1791956603819`; `install` prints `No pending install steps.` (the registry is empty in Module 0); after `up` the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations`. Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
 
 If the API image fails at `deploy` because `dist` is missing from `/out`, check `"files": ["dist"]` in both `apps/api/package.json` and `packages/shared/package.json`.
 
@@ -2493,8 +2516,9 @@ Time off, made simple. A self-hostable leave management app.
 
 ```bash
 docker compose build
-docker compose run --rm migrate    # migrations never run automatically; repeat after every upgrade
-docker compose up
+docker compose run --rm migrate    # 1. schema; repeat on every upgrade
+docker compose run --rm install    # 2. seed defaults; repeat on every upgrade
+docker compose up                  # 3. start (the API runs neither step itself)
 ```
 
 - App: http://localhost:8080
@@ -2509,7 +2533,8 @@ Requires Node 24 and pnpm 10 (`corepack enable`).
 pnpm install                                  # also builds @offwise/shared
 docker compose up -d db mailpit
 cp apps/api/.env.example apps/api/.env
-pnpm --filter @offwise/api migration:run      # the API refuses to start with pending migrations
+pnpm --filter @offwise/api migration:run      # the API never migrates or checks; run after pulling
+pnpm --filter @offwise/api install:run        # the same for install steps
 pnpm --filter @offwise/api start:dev          # http://localhost:3000/api
 pnpm --filter @offwise/web dev                # http://localhost:5173 (proxies /api)
 ```
@@ -2560,7 +2585,7 @@ git commit -m "chore: run full stack with docker compose; document dev workflow"
 | pnpm workspaces, Nest and Vue apps, `@offwise/shared` | 1, 2, 5 |
 | docker compose with `db`, `api`, `web`, Mailpit | 3, 7 |
 | Env validation (`NODE_ENV`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`), `.env.example` | 2, 3 |
-| TypeORM data source and migrations, shared options; no automatic migrations, startup refuses pending migrations | 3, 7 |
+| TypeORM data source and migrations, shared options; migrate and install as explicit commands, no startup checks (ADR 0006) | 3, 4, 7 |
 | Install-step runner (`install_steps`, once per installation, after migrations) | 4 |
 | Health endpoint | 3 |
 | snake_case table and column names (naming strategy + schema guard) | 3 |
