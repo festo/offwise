@@ -27,6 +27,17 @@ pnpm --filter @offwise/web build-storybook    # must pass before done
 - API request/response types come from `@offwise/shared`. Don't redefine them locally.
 - No leave/balance calculations in the frontend; display what the API returns.
 
+## Mobile first
+
+Every screen works on a phone, from the first version of the screen.
+
+- Write styles mobile first: base Tailwind classes target the phone; `sm:`, `md:` and `lg:` add to them. Minimum supported width is 360 px, with no horizontal page scroll.
+- Touch targets are at least 44 × 44 px. Form inputs use a font size of at least 16 px (iOS zooms on smaller inputs). Forms are single-column on phones.
+- Nothing depends on hover: tooltips, menus and row actions also work by tap.
+- Navigation goes off-canvas on small screens; wide tables become stacked cards below `md`.
+- Layout-sensitive components have a `Mobile` story that sets Storybook's mobile viewport.
+- When checking a page with the Playwright MCP server, check it at 375 px and at a desktop width.
+
 ## Storybook
 
 - Every component has a co-located `<Component>.stories.ts` (CSF3): everything in `src/components/` (including shadcn primitives in `src/components/ui/`, one story per variant) and in `src/features/*/components/`. Pages and `App.vue` are excluded. `src/stories-coverage.spec.ts` fails on any component without a story, so adding a shadcn primitive with the CLI means adding its story in the same change.
