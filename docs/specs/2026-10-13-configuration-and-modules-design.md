@@ -12,7 +12,7 @@ Before writing application code, agree on two things for offwise, based on the p
 
 Each module in the roadmap gets its own spec, plan and implementation cycle on its own branch. This document does not design any module in detail.
 
-Related ADRs: 0002 (server-side sessions), 0003 (settings and install steps), 0006 (migrations and install as explicit commands).
+Related ADRs: 0002 (server-side sessions), 0003 (settings and install steps), 0006 (migrations and install as explicit commands), 0007 (devcontainer for development).
 
 ## Part 1: Configuration model
 
@@ -49,7 +49,7 @@ Rules:
 - `.env*` files are gitignored; a committed `.env.example` documents every variable.
 - SMTP stays in env, not the DB, because password reset must work before any admin has configured anything.
 - Docker compose runs Mailpit for development, and the dev `.env.example` points SMTP at it.
-- The web app has **no runtime env**. It calls `/api` on its own origin, through the Vite proxy in development and a reverse proxy in docker compose. Same-origin requests keep session cookies simple and avoid CORS.
+- The web app has **no runtime env**. It calls `/api` on its own origin, through the Vite proxy in development and a reverse proxy in deployed setups (deployment module). Same-origin requests keep session cookies simple and avoid CORS.
 
 ### DB settings
 
@@ -116,7 +116,7 @@ Every module is a complete vertical slice: API, web UI including admin screens, 
 
 | # | Module | Scope | Depends on |
 | --- | --- | --- | --- |
-| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; docker compose (`db`, `api`, `web`, Mailpit); env validation; TypeORM data source and migrations (explicit command only); install-step runner and `install` command (ADR 0006); no startup checks in the API; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
+| 0 | Scaffolding | pnpm workspaces; NestJS and Vue apps; `@offwise/shared`; devcontainer for local development with `db` and Mailpit, `pnpm dev` (ADR 0007); env validation; TypeORM data source and migrations (explicit command only); install-step runner and `install` command (ADR 0006); no startup checks in the API; health endpoint; vue-i18n with English only; `lint`, `typecheck`, `test`, `format` and the other scripts required by `CLAUDE.md` | — |
 | 1 | Identity & login | Users (name, email, role, language, time zone, status); password hashing; server-side sessions; login and logout; password reset by email; first-admin bootstrap; settings infrastructure; audit log foundation (append-only, used by every later module); admin user management (add, edit, close, set role); private-page shell in the web app. Temporary authorization: "signed in" and "is admin" only | 0 |
 | 2 | Org structure | Team tree; team managers, who may belong to a different team; membership with history, so moves keep history; manager-chain resolution; `org.root-team` step; admin UI for the tree | 1 |
 | 3 | Access control | Roles (Employee, Manager, HR/Admin, Auditor) mapped to permissions with scopes (own, managed subtree, company); Auditor read-only; replaces the temporary guards from module 1; route and menu guards in the web app | 2 |
@@ -137,6 +137,7 @@ Every module is a complete vertical slice: API, web UI including admin screens, 
 | 17 | Employee lifecycle | Start and end dates; leaver handling: pro-rating, balance at end date, future leave cancelled, account closed and soft-deleted (#7); CSV bulk import of users and opening balances | 9 |
 | 18 | SSO (OIDC) | Admin-configured OIDC provider; first SSO sign-in creates an account waiting for HR approval; password and SSO on/off switches; `AUTH_FORCE_PASSWORD_LOGIN` | 3 |
 | 19 | Public REST API | API tokens for integrations; documented endpoints for users, teams, leave, balances and reports | 3, 15 |
+| 20 | Deployment | Production images for API and web, reverse proxy serving the web app and `/api`, one-shot `migrate` and `install` compose services (ADR 0006), upgrade guide | 0 (can move earlier when a deployable build is needed) |
 
 Numbers in parentheses refer to the reference use cases in the feature specification.
 

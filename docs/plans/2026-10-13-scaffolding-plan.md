@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install-step runner and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and `docker compose up` running the whole stack.
+**Goal:** A runnable, empty offwise monorepo: NestJS API with validated env, TypeORM migrations, an install command and a health endpoint; a Vue 3 web app with Tailwind, shadcn-vue, vue-i18n and Storybook that shows the API status; and a devcontainer in which `pnpm dev` runs the whole app (ADR 0007).
 
 **Architecture:** Plain pnpm workspaces with `apps/api`, `apps/web` and `packages/shared`. The API validates env with zod at startup and shares one TypeORM options builder with the TypeORM CLI. It neither runs nor checks migrations and install steps; those are explicit operator commands (`migrate`, `install`) run before the API starts (ADR 0006). The web app talks to `/api` on its own origin (Vite proxy in dev, nginx in compose). Spec: `docs/specs/2026-10-13-configuration-and-modules-design.md`, ADRs 0001–0006.
 
@@ -35,11 +35,12 @@ Decisions made while Tasks 3–4 were being implemented. Task text below for tho
 
 - **Migrations by glob, not an array** (Task 3/4): `src/migrations/index.ts` is gone; `buildDataSourceOptions` uses `src/migrations/*{.ts,.js}` except under Vitest (`[]`); `test/global-setup.ts` runs `migration:run` through the CLI against `offwise_test`; `migration:create` script added.
 - **CLI-generated migration** (Task 4): the hand-written `1760313600000-CreateInstallSteps.ts` was replaced by the CLI-generated `1791956603819-CreateInstallSteps.ts`.
+- **Task 7 replaced by the devcontainer** (ADR 0007): production images, nginx and compose `migrate`/`install`/`api`/`web` services are deferred to a deployment module.
 - **No startup checks; explicit install command** (ADR 0006): the pending-migration check (`findPendingMigrations`, `DatabaseModule.onModuleInit`, their tests) is removed. `InstallModule` no longer runs steps on bootstrap. `src/install.ts` (dev: `install:run`, built: `install:run:dist`) applies pending install steps from a Nest application context; compose gets a one-shot `install` service next to `migrate`.
 
 ## Agent routing
 
-Tasks 1–4 and 7 → `backend` agent. Tasks 5–6 → `frontend` agent.
+Tasks 1–4 → `backend` agent. Tasks 5–6 → `frontend` agent. Task 7 (devcontainer, repo tooling) → `general-purpose`.
 
 ## File structure
 
@@ -2377,199 +2378,160 @@ git commit -m "feat(web): add Storybook with stories for every component" -m "Co
 
 ---
 
-### Task 7: Full stack in Docker Compose, docs and final verification
+### Task 7: Devcontainer, `pnpm dev`, docs and final verification
+
+Replaces the original "full stack in Docker Compose" task (ADR 0007): production images, nginx and the one-shot `migrate`/`install` compose services are deferred to a later deployment module.
 
 **Files:**
-- Create: `.dockerignore`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `apps/web/nginx.conf`
-- Modify: `docker-compose.yml`, `README.md`, `CLAUDE.md`
+- Create: `.devcontainer/devcontainer.json`, `.devcontainer/compose.yml`, `.devcontainer/post-create.sh`
+- Modify: `package.json` (root `dev` script), `apps/api/package.json` (`dev` script), `README.md`, `CLAUDE.md`, `apps/api/CLAUDE.md`, `apps/web/CLAUDE.md`
 
 **Interfaces:**
-- Consumes: everything above.
-- Produces: `docker compose up` serving the web app on http://localhost:8080 with `/api` proxied to the API; Mailpit UI on http://localhost:8025 (SMTP on 1025) ready for Module 1.
+- Consumes: root `docker-compose.yml` (`db` service + `docker/postgres/init`), the API's `migration:run`, `install:run`, `start:dev`, the web app's `dev`.
+- Produces: "Reopen in Container" gives a ready environment; `pnpm dev` runs API (3000) and web (5173); Storybook on 6006, Mailpit UI on 8025, all forwarded to the host.
 
-- [ ] **Step 1: Dockerfiles**
+- [ ] **Step 1: Root `dev` script**
 
-`.dockerignore`:
+`apps/api/package.json` scripts — add:
 
-```
-**/node_modules
-**/dist
-**/coverage
-**/storybook-static
-**/.env
-.git
+```json
+    "dev": "pnpm run start:dev"
 ```
 
-`apps/api/Dockerfile`:
+Root `package.json` scripts — add:
 
-```dockerfile
-FROM node:24-alpine AS build
-WORKDIR /repo
-RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/api/package.json apps/api/
-RUN pnpm install --frozen-lockfile --filter @offwise/api... --ignore-scripts
-COPY packages/shared packages/shared
-COPY apps/api apps/api
-RUN pnpm --filter @offwise/api build
-RUN pnpm --filter @offwise/api deploy --legacy --prod /out
-
-FROM node:24-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /out ./
-USER node
-EXPOSE 3000
-CMD ["node", "dist/main.js"]
+```json
+    "dev": "pnpm --parallel --filter @offwise/api --filter @offwise/web run dev"
 ```
 
-`apps/web/nginx.conf`:
+Verify on the host: `pnpm dev` starts both (`Nest application successfully started`, Vite `Local: http://localhost:5173/`); Ctrl+C stops both.
 
-```nginx
-server {
-  listen 80;
-  root /usr/share/nginx/html;
+- [ ] **Step 2: Devcontainer compose**
 
-  location /api/ {
-    proxy_pass http://api:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  location / {
-    try_files $uri $uri/ /index.html;
-  }
-}
-```
-
-`apps/web/Dockerfile`:
-
-```dockerfile
-FROM node:24-alpine AS build
-WORKDIR /repo
-RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @offwise/web... --ignore-scripts
-COPY packages/shared packages/shared
-COPY apps/web apps/web
-RUN pnpm --filter @offwise/web build
-
-FROM nginx:1.27-alpine
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
-```
-
-- [ ] **Step 2: Compose services**
-
-Replace `docker-compose.yml` with:
+`.devcontainer/compose.yml` (merged with the root `docker-compose.yml`, which provides `db`):
 
 ```yaml
 services:
   db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: offwise
-      POSTGRES_PASSWORD: offwise
-      POSTGRES_DB: offwise
-    ports:
-      - '5432:5432'
-    volumes:
-      - db-data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U offwise -d offwise']
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    # Reachable only inside the dev environment (workspace shares this network namespace);
+    # not published, so it never clashes with a Postgres on the host.
+    ports: !reset []
 
   mailpit:
     image: axllent/mailpit:v1.27
-    ports:
-      - '8025:8025' # web UI
-      - '1025:1025' # SMTP
+    network_mode: service:db
 
-  # One-shot migration command; never started by `docker compose up`.
-  # Run explicitly: docker compose run --rm migrate
-  migrate:
-    profiles: ['migrate']
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    command: ['node', 'dist/migrate.js']
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
+  workspace:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm
+    command: sleep infinity
+    # Same network namespace as db: localhost:5432 (db), :1025/:8025 (mailpit) work as on the host.
+    network_mode: service:db
     depends_on:
       db:
         condition: service_healthy
-
-  # One-shot install command (seeds install steps); never started by `docker compose up`.
-  # Run explicitly after migrate: docker compose run --rm install
-  install:
-    profiles: ['install']
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    command: ['node', 'dist/install.js']
     environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
-    depends_on:
-      db:
-        condition: service_healthy
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      LOG_LEVEL: info
-      DATABASE_URL: postgresql://offwise:offwise@db:5432/offwise
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - '3000:3000'
-
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    depends_on:
-      - api
-    ports:
-      - '8080:80'
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+    volumes:
+      - ..:/workspaces/offwise:cached
+      # Linux node_modules and the pnpm store stay in volumes, never on the host disk.
+      - node_modules:/workspaces/offwise/node_modules
+      - api_node_modules:/workspaces/offwise/apps/api/node_modules
+      - web_node_modules:/workspaces/offwise/apps/web/node_modules
+      - shared_node_modules:/workspaces/offwise/packages/shared/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm
+      - claude_config:/home/node/.claude
 
 volumes:
-  db-data: {}
+  node_modules: {}
+  api_node_modules: {}
+  web_node_modules: {}
+  shared_node_modules: {}
+  pnpm_store: {}
+  claude_config: {}
 ```
 
-- [ ] **Step 3: Verify the stack**
+(`!reset` needs Docker Compose ≥ 2.24.)
+
+- [ ] **Step 3: devcontainer.json and post-create**
+
+`.devcontainer/devcontainer.json`:
+
+```json
+{
+  "name": "offwise",
+  "dockerComposeFile": ["../docker-compose.yml", "compose.yml"],
+  "service": "workspace",
+  "runServices": ["db", "mailpit", "workspace"],
+  "workspaceFolder": "/workspaces/offwise",
+  "remoteUser": "node",
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  "forwardPorts": [5173, 3000, 6006, 8025],
+  "portsAttributes": {
+    "5173": { "label": "web" },
+    "3000": { "label": "api" },
+    "6006": { "label": "storybook" },
+    "8025": { "label": "mailpit" }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "vitest.explorer",
+        "anthropic.claude-code"
+      ]
+    }
+  }
+}
+```
+
+`.devcontainer/post-create.sh` (executable):
 
 ```bash
-docker compose down -v
-docker compose build
-docker compose run --rm migrate
-docker compose run --rm install
-docker compose up -d
-docker compose logs api | grep -E "Nest application successfully started|Error"
-curl -s http://localhost:8080/api/health
-curl -s http://localhost:8080/ | grep -o '<title>offwise</title>'
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8025
-docker compose exec db psql -U offwise -d offwise -c '\dt'
+#!/usr/bin/env bash
+# Runs once when the devcontainer is created (ADR 0007).
+set -euo pipefail
+
+# Named volumes are created root-owned; hand them to the node user.
+sudo chown -R node:node \
+  node_modules apps/api/node_modules apps/web/node_modules packages/shared/node_modules \
+  /home/node/.local/share/pnpm /home/node/.claude
+
+sudo corepack enable
+CI=true pnpm install --frozen-lockfile
+
+[ -f apps/api/.env ] || cp apps/api/.env.example apps/api/.env
+
+# Wait for Postgres (shared network namespace: localhost).
+timeout 60 bash -c 'until (echo > /dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 1; done'
+
+# ADR 0006: explicit setup commands; after pulling new code, run them again yourself.
+pnpm --filter @offwise/api migration:run
+pnpm --filter @offwise/api install:run
+
+echo "offwise devcontainer ready: run 'pnpm dev' (web http://localhost:5173, api http://localhost:3000/api)"
 ```
 
-Expected: `migrate` prints `Applied migrations: CreateInstallSteps1791956603819`; `install` prints `No pending install steps.` (the registry is empty in Module 0); after `up` the api log shows the start line and no errors; health prints `{"status":"ok","db":"up"}`; the title matches; Mailpit returns `200`; `\dt` lists `install_steps` and `migrations`. Open http://localhost:8080: the badge reads "API connected". Then `docker compose down`.
+- [ ] **Step 4: Verify with the devcontainer CLI**
 
-If the API image fails at `deploy` because `dist` is missing from `/out`, check `"files": ["dist"]` in both `apps/api/package.json` and `packages/shared/package.json`.
+From the repo root on the host:
 
-- [ ] **Step 4: Docs**
+```bash
+npx -y @devcontainers/cli up --workspace-folder .
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc 'node -v && pnpm -v && claude --version'
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc 'pnpm -r lint && pnpm -r typecheck && pnpm -r test && pnpm --filter @offwise/api test:e2e && pnpm --filter @offwise/web build-storybook && pnpm format:check'
+npx -y @devcontainers/cli exec --workspace-folder . bash -lc '(pnpm dev > /tmp/dev.log 2>&1 &) ; sleep 15; curl -s localhost:3000/api/health; curl -s localhost:5173/api/health; grep -E "successfully started|Local:" /tmp/dev.log'
+```
+
+Expected: Node v24, pnpm 10, a Claude Code version; every check exits 0; both curls print `{"status":"ok","db":"up"}`. Then confirm the host is untouched: `ls node_modules/.pnpm | head -1` on the host shows the host's own install (the container's lives in volumes), and the host's `db` container (if running) still owns port 5432.
+
+Tear down: `docker compose -p offwise_devcontainer down -v` (use the project name printed by `devcontainer up`, or `docker compose ls`).
+
+- [ ] **Step 5: Docs**
 
 `README.md`:
 
@@ -2578,68 +2540,39 @@ If the API image fails at `deploy` because `dist` is missing from `/out`, check 
 
 Time off, made simple. A self-hostable leave management app.
 
-## Run the whole stack
+## Develop (devcontainer)
 
-```bash
-docker compose build
-docker compose run --rm migrate    # 1. schema; repeat on every upgrade
-docker compose run --rm install    # 2. seed defaults; repeat on every upgrade
-docker compose up                  # 3. start (the API runs neither step itself)
-```
+Requires Docker and VS Code (or Cursor) with the Dev Containers extension, or the devcontainer CLI.
 
-- App: http://localhost:8080
-- API health: http://localhost:8080/api/health
-- Mailpit (dev mail inbox): http://localhost:8025
+1. Open the repo and choose **Reopen in Container**. The first start installs dependencies, creates `apps/api/.env`, and runs migrations and install steps.
+2. Run `pnpm dev` in the container terminal.
+   - Web: http://localhost:5173
+   - API: http://localhost:3000/api (health: `/api/health`)
+   - Mailpit (dev mail inbox): http://localhost:8025
+   - Storybook: `pnpm --filter @offwise/web storybook` → http://localhost:6006
+3. After pulling new code: `pnpm install`, `pnpm --filter @offwise/api migration:run`, `pnpm --filter @offwise/api install:run` (the API never runs them itself).
 
-## Develop
-
-Requires Node 24 and pnpm 10 (`corepack enable`).
-
-```bash
-pnpm install                                  # also builds @offwise/shared
-docker compose up -d db mailpit
-cp apps/api/.env.example apps/api/.env
-pnpm --filter @offwise/api migration:run      # the API never migrates or checks; run after pulling
-pnpm --filter @offwise/api install:run        # the same for install steps
-pnpm --filter @offwise/api start:dev          # http://localhost:3000/api
-pnpm --filter @offwise/web dev                # http://localhost:5173 (proxies /api)
-```
+Tear down: delete the container and its volumes (VS Code: *Dev Containers: Clean Up Dev Volumes*, or `docker compose ls` then `docker compose -p <project> down -v`).
 
 Checks: `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm --filter @offwise/api test:e2e`, `pnpm --filter @offwise/web build-storybook`.
+
+Without the devcontainer: Node 24, pnpm 10 (`corepack enable`), `docker compose up -d db`, then the same commands.
 
 See `CLAUDE.md` for conventions and `docs/` for specs, plans and decisions.
 ````
 
-In root `CLAUDE.md`, replace the heading `## Commands (once scaffolded)` with `## Commands`, and add one line to the code block after `pnpm install`:
+Root `CLAUDE.md`: in the commands block replace `docker compose up                  # start web, api, and postgres` with `pnpm dev                           # api + web dev servers (inside the devcontainer)`, change the e2e comment to `# API e2e (needs postgres: devcontainer or docker compose up -d db)`, replace the heading `## Commands (once scaffolded)` with `## Commands`, and add under the repo layout: "Development runs in the devcontainer (`.devcontainer/`, ADR 0007); Claude Code runs inside it." Drop `(once scaffolded)` from the `## Commands` headings in `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md`.
 
-```bash
-docker compose up -d db mailpit    # just the dependencies, for running api/web locally
-```
+- [ ] **Step 6: Final verification**
 
-Also drop `(once scaffolded)` from the `## Commands` headings in `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md`.
+Inside the devcontainer (Step 4 commands) and on the host after `pnpm install`: `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm --filter @offwise/api test:e2e` (host: with `docker compose up -d db`), `pnpm --filter @offwise/web build-storybook`, `pnpm format:check`. Every command exits 0; read the output and report any failure instead of claiming success.
 
-- [ ] **Step 5: Final verification from a clean install**
-
-```bash
-rm -rf node_modules apps/*/node_modules packages/*/node_modules packages/shared/dist
-pnpm install
-docker compose up -d db
-pnpm -r lint
-pnpm -r typecheck
-pnpm -r test
-pnpm --filter @offwise/api test:e2e
-pnpm --filter @offwise/web build-storybook
-pnpm format:check
-```
-
-Expected: every command exits 0. If only `format:check` fails, run `pnpm -r format`, review the diff, and re-run. Read the output; report any failure instead of claiming success.
-
-- [ ] **Step 6: Hand over for human review (ADR 0004)**
+- [ ] **Step 7: Hand over for human review (ADR 0004)**
 
 Do not stage or commit. Report the changed files (`git status --short`) and the verification results, and stop. After the human has reviewed and staged the changes, the coordinating session commits exactly what is staged:
 
 ```bash
-git commit -m "chore: run full stack with docker compose; document dev workflow" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "chore: devcontainer for local development (ADR 0007); pnpm dev" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2649,7 +2582,7 @@ git commit -m "chore: run full stack with docker compose; document dev workflow"
 | Spec item | Task |
 | --- | --- |
 | pnpm workspaces, Nest and Vue apps, `@offwise/shared` | 1, 2, 5 |
-| docker compose with `db`, `api`, `web`, Mailpit | 3, 7 |
+| docker compose `db`; devcontainer with `db`, Mailpit and `pnpm dev` (ADR 0007; deployable images deferred) | 3, 7 |
 | Env validation (`NODE_ENV`, `PORT`, `LOG_LEVEL`, `DATABASE_URL`), `.env.example` | 2, 3 |
 | TypeORM data source and migrations, shared options; migrate and install as explicit commands, no startup checks (ADR 0006) | 3, 4, 7 |
 | Install-step runner (`install_steps`, once per installation, after migrations) | 4 |
