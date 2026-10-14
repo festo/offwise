@@ -14,7 +14,7 @@ Requires Docker (Compose ≥ 2.24) and VS Code (or Cursor) with the Dev Containe
    - Storybook: `pnpm --filter @offwise/web storybook` → http://localhost:6006
 3. After pulling new code: `pnpm install`, `pnpm --filter @offwise/api migration:run`, `pnpm --filter @offwise/api install:run` (the API never runs them itself).
 
-Tear down: delete the container and its volumes (VS Code: *Dev Containers: Clean Up Dev Volumes*, or `docker compose -p offwise-devcontainer down -v`). The devcontainer has its own Compose project and database volume, so a host `docker compose up -d db` is never affected.
+Tear down: delete the container and its volumes (VS Code: *Dev Containers: Clean Up Dev Volumes*, or `docker compose -f docker-compose.yml -f .devcontainer/compose.yml down -v` from the repo root). The devcontainer has its own Compose project and database volume, so a host `docker compose up -d db` is never affected.
 
 Checks: `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm --filter @offwise/api test:e2e`, `pnpm --filter @offwise/web build-storybook`.
 

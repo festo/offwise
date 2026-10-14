@@ -7,7 +7,7 @@
   },
   "scripts": {
     "postinstall": "pnpm --filter @offwise/shared build",
-    "dev": "pnpm --parallel --filter @offwise/api --filter @offwise/web run dev",
+    "dev": "pnpm --parallel --filter @offwise/shared --filter @offwise/api --filter @offwise/web run dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

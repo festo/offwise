@@ -15,6 +15,12 @@ describe('validateEnv', () => {
     expect(validateEnv({ NODE_ENV: 'production', DATABASE_URL: DB, PORT: '8080' }).PORT).toBe(8080);
   });
 
+  it('treats blank optional variables as unset', () => {
+    const env = validateEnv({ NODE_ENV: 'test', DATABASE_URL: DB, PORT: '', LOG_LEVEL: '' });
+    expect(env.PORT).toBe(3000);
+    expect(env.LOG_LEVEL).toBe('info');
+  });
+
   it('drops variables it does not know', () => {
     expect(
       validateEnv({ NODE_ENV: 'test', DATABASE_URL: DB, PATH: '/usr/bin' }),

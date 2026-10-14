@@ -1,18 +1,15 @@
-import { join } from 'node:path';
 import type { DataSourceOptions } from 'typeorm';
 import { entities } from './entities';
 import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 /**
- * Migrations are discovered by glob (no list to maintain). Under Vitest the list is empty:
- * TypeORM loads migration files with Node's own require, which bypasses Vitest's SWC transform.
+ * The single options object shared by TypeOrmModule and the CLI data source.
+ * Only the CLI data source passes migrations: the API never runs or checks them (ADR 0006).
  */
-const migrations: DataSourceOptions['migrations'] = process.env.VITEST
-  ? []
-  : [join(__dirname, '..', 'migrations', '*{.ts,.js}')];
-
-/** The single options object shared by TypeOrmModule and the CLI data source. */
-export function buildDataSourceOptions(databaseUrl: string): DataSourceOptions {
+export function buildDataSourceOptions(
+  databaseUrl: string,
+  migrations: DataSourceOptions['migrations'] = [],
+): DataSourceOptions {
   return {
     type: 'postgres',
     url: databaseUrl,

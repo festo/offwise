@@ -1,5 +1,3 @@
-import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
 import type { INestApplicationContext } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { DataSource, type EntityManager } from 'typeorm';
@@ -9,7 +7,7 @@ import { InstallCliModule } from '../src/install/install-cli.module';
 import { InstallStepRecord } from '../src/install/install-step-record.entity';
 import { InstallStepRunner } from '../src/install/install-step-runner.service';
 import { resetDatabase } from './utils/reset-database';
-import { TEST_DATABASE_URL } from './test-env';
+import { runApiCli } from './utils/run-api-cli';
 
 describe('InstallStepRunner (e2e)', () => {
   let app: INestApplicationContext;
@@ -96,23 +94,8 @@ describe('InstallStepRunner (e2e)', () => {
   });
 
   it('the install command exits 0 and is idempotent against the test database', () => {
-    const apiRoot = join(__dirname, '..');
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      NODE_ENV: 'test',
-      DATABASE_URL: TEST_DATABASE_URL,
-    };
-    // Vitest marks its process with VITEST; the child must run as a normal process.
-    delete env.VITEST;
-    const runCommand = () =>
-      spawnSync(join(apiRoot, 'node_modules', '.bin', 'ts-node'), ['src/install.ts'], {
-        cwd: apiRoot,
-        env,
-        encoding: 'utf8',
-      });
-
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = runCommand();
+      const result = runApiCli('ts-node', ['src/install.ts']);
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain('No pending install steps.');
     }
