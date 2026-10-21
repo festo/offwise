@@ -43,6 +43,7 @@ Validated at API startup. A missing or invalid value stops the process with a cl
 | `MAIL_FROM` | yes | Sender address | 1 |
 | `INITIAL_ADMIN_EMAIL` | no | First-admin bootstrap (see below) | 1 |
 | `INITIAL_ADMIN_PASSWORD` | no | Optional password for the bootstrap admin | 1 |
+| `TRUST_PROXY` | no (default `loopback`) | Which reverse proxies may set `X-Forwarded-For`: `true`, `false`, a hop count, or a comma-separated list of IPs, CIDRs and the presets `loopback`, `linklocal`, `uniquelocal`. Used for audit IPs and per-IP login throttling | 1 |
 | `AUTH_FORCE_PASSWORD_LOGIN` | no (default false) | Emergency access: enables password sign-in regardless of the DB setting, for when SSO is misconfigured and admins are locked out | 18 |
 
 Rules:

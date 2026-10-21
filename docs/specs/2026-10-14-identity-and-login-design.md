@@ -47,7 +47,7 @@ Out of scope:
 | Password hashing | Argon2id via `@node-rs/argon2`, OWASP parameters (19 MiB, 2 iterations, parallelism 1), encoded hash string, rehash on login when parameters change. |
 | Password policy | 12 to 128 characters, no composition rules, no expiry (NIST 800-63B). No breached-password check. |
 | Sessions | Redis (ADR 0002). Sliding idle timeout 7 days, absolute cap 30 days. |
-| Throttling | Redis counters: 5 failed logins per email per 15 min, 30 attempts per IP per 15 min, 3 reset requests per email per hour. No permanent lockout. |
+| Throttling | 5 login attempts per email since the last successful login (or password reset), 30 per IP, per 15 min; 3 reset requests per email per hour. Every login attempt is counted atomically before the password is verified; a successful login gives its IP attempt back and clears the email counter, so the IP budget effectively counts failures. The client IP is `req.ip`, resolved through the proxies trusted by `TRUST_PROXY`. No permanent lockout. |
 | CSRF | Custom header plus Fetch Metadata with Origin fallback, `SameSite=Lax` as defence in depth (ADR 0002). |
 | Audit log | Generic event rows, append-only enforced by a database trigger; includes security events (logins, resets). |
 | Auth implementation | Own `SessionService` on `ioredis` and global Nest guards. No `express-session`, no Passport. |
@@ -123,7 +123,7 @@ Accessed through `ioredis`. Development uses logical database 0, e2e tests use d
 - Each namespace registers a class-validator DTO, its defaults and the list of secret fields. Secret fields are encrypted with AES-256-GCM using `ENCRYPTION_KEY` and never returned by the API. Module 1 has no secret fields but ships the encrypt/decrypt helper with tests for modules 13 and 18.
 - Module 1 defines the `company` namespace: `{ name: string, locale: string }`, defaults `"offwise"` and `"en-GB"`. Module 4 adds the remaining company fields.
 - The `company.defaults` install step writes the `company` row with these defaults.
-- No settings endpoints in this module. `GET /auth/me` returns the effective locale and time zone; the company settings screen is module 4.
+- No settings endpoints in this module. `GET /auth/me` returns the user's locale and time zone with company defaults applied; the company settings screen is module 4.
 
 ## API
 
@@ -153,7 +153,7 @@ The health endpoint is `@Public()`. Every request reads the user from PostgreSQL
 | `POST /auth/password-reset` `{ email }` | public | always 202; 429 when the per-email limit is exceeded |
 | `POST /auth/password-reset/confirm` `{ token, password }` | public | 204; 400 if the token is invalid or expired, or the password breaks the policy |
 
-`CurrentUser`: `id`, `name`, `email`, `role`, `locale` and `timeZone` (as stored, nullable), and `effectiveLocale` and `effectiveTimeZone` (with company defaults applied). The company default time zone is `UTC` until module 4 adds the setting.
+`CurrentUser`: `id`, `name`, `email`, `role`, `locale` and `timeZone` (never null: the user's own value, or the company default when they have not set one; the admin `UserDto` keeps the stored, nullable values). The company default time zone is `UTC` until module 4 adds the setting.
 
 ### User endpoints (admin only)
 
@@ -173,18 +173,18 @@ Validation: `name` 1 to 200 characters, trimmed; `email` a valid address up to 2
 
 **Login**
 
-1. Check the email and IP throttle counters; if either is over its limit, return 429.
+1. Count every attempt atomically against the email and IP throttle counters before verifying; if either is over its limit, return 429 without verifying the password.
 2. Find the non-deleted user by `lower(email)`.
 3. Verify the password with Argon2. If the user does not exist or has no password, verify against a fixed dummy hash, so the response time does not reveal whether the account exists.
-4. On failure, increment both counters and audit `auth.login_failed` (entity is the user if found; the attempted email is in `after`). Return 401.
-5. On success, clear the email counter, rehash if the hash parameters are outdated, create the session, set the cookie and audit `auth.login_succeeded`.
+4. On failure, audit `auth.login_failed` (entity is the user if found; the attempted email is in `after`). Return 401.
+5. On success, give the attempt back to the IP counter (decrement, never below 0), clear the email counter, rehash if the hash parameters are outdated, create the session, set the cookie and audit `auth.login_succeeded`.
 
 **Password reset**
 
 1. `POST /auth/password-reset` checks and increments the per-email counter and returns 202.
 2. After the response, if a non-deleted user has the email, the API creates a token and sends the email; an `auth.password_reset_requested` event is audited. Unknown emails send nothing and audit nothing.
 3. The email link is `${PUBLIC_URL}/reset-password#token=<token>`. The token sits in the fragment, so it never reaches server logs or `Referer` headers.
-4. `POST /auth/password-reset/confirm` reads the token with `GETDEL`, validates the password, stores the new hash, deletes all of the user's sessions and other reset tokens, and audits `auth.password_reset_completed`.
+4. `POST /auth/password-reset/confirm` reads the token with `GETDEL`, validates the password, and in one transaction stores the new hash, audits `auth.password_reset_completed`, and deletes all of the user's sessions and other reset tokens (a Redis failure rolls the password change back). It then clears the login email throttle counter for that email.
 
 **Closing a user:** in one transaction, set `deleted_at` and audit `user.closed`; after the commit, delete the user's sessions from Redis.
 
@@ -192,13 +192,15 @@ Validation: `name` 1 to 200 characters, trimmed; `email` a valid address up to 2
 
 Runs only when `INITIAL_ADMIN_EMAIL` is set and no non-deleted admin exists:
 
-- If a non-deleted user has that email, promote them to `admin`.
+- If a non-deleted user has that email, promote them to `admin`. Promotion keeps the user's existing password; `INITIAL_ADMIN_PASSWORD` is ignored for them, and a one-time link is logged only when they have no password.
 - Otherwise create an admin with that email and the name "Administrator".
-- With `INITIAL_ADMIN_PASSWORD`, set that password (it must meet the policy, otherwise the command fails with a clear message).
-- Without it, log a one-time reset link valid for 24 hours.
+- For a new admin with `INITIAL_ADMIN_PASSWORD`, set that password (it must meet the policy, otherwise the command fails with a clear message).
+- For a new admin without it, log a one-time reset link valid for 24 hours.
 - Audit `user.created` or `user.role_changed` with a null actor.
 
 If an admin exists, the bootstrap does nothing, so leaving the variables set is harmless.
+
+The link is printed to stdout, where CI and container logs may keep it, so automated environments should prefer `INITIAL_ADMIN_PASSWORD`.
 
 ### Audit
 
@@ -235,7 +237,7 @@ Nest HTTP exceptions with clear messages. Field errors use the `ValidationPipe` 
 - `features/auth/`: `LoginForm`, `ForgotPasswordForm`, `ResetPasswordForm`, `useSession`.
 - `features/users/`: `UserTable`, `UserForm`, `CloseUserDialog`, `useUsers`.
 - `components/`: `AppLayout`, `AuthLayout`, `UserMenu`.
-- shadcn-vue primitives added with the CLI as needed (Sidebar, Sheet, Card, Input, Label, Button, Table, Dialog, Select, DropdownMenu, Switch, Pagination), each with its story.
+- shadcn-vue primitives added with the CLI as needed (Sidebar, Sheet, Card, Input, Label, Button, Table, Dialog, Select, DropdownMenu, Switch), each with its story.
 - Pages are thin wrappers that compose feature components.
 
 ### Session state
@@ -248,7 +250,7 @@ Nest HTTP exceptions with clear messages. Field errors use the `ValidationPipe` 
 
 ### Localization
 
-All strings go through `t()`. After `load()`, vue-i18n switches to the language subtag of `effectiveLocale` (`hu-HU` → `hu`) if that translation exists, otherwise `en`. Only `en` exists in this module.
+All strings go through `t()`. After `load()`, vue-i18n switches to the language subtag of the user's `locale` (`hu-HU` → `hu`) if that translation exists, otherwise `en`. Only `en` exists in this module.
 
 ### Validation
 
@@ -279,14 +281,15 @@ New environment variables (zod schema and `apps/api/.env.example`):
 | --- | --- | --- |
 | `REDIS_URL` | yes | `redis://` or `rediss://` URL; dev `redis://localhost:6379/0` |
 | `PUBLIC_URL` | yes | absolute `http(s)` URL; dev `http://localhost:5173` |
-| `SESSION_SECRET` | yes | at least 32 characters |
-| `ENCRYPTION_KEY` | yes | base64 that decodes to exactly 32 bytes |
+| `SESSION_SECRET` | yes | at least 32 characters; the `.env.example` placeholder is rejected when `NODE_ENV=production` |
+| `ENCRYPTION_KEY` | yes | base64 that decodes to exactly 32 bytes; the `.env.example` placeholder is rejected when `NODE_ENV=production` |
 | `SMTP_HOST`, `SMTP_PORT` | yes | dev Mailpit `localhost`, `1025` |
 | `SMTP_USER`, `SMTP_PASSWORD` | no | |
 | `SMTP_SECURE` | no (default false) | boolean |
 | `MAIL_FROM` | yes | email address; dev `offwise <noreply@offwise.local>` |
 | `INITIAL_ADMIN_EMAIL` | no | email address |
 | `INITIAL_ADMIN_PASSWORD` | no | must meet the password policy if set |
+| `TRUST_PROXY` | no (default `loopback`) | `true`, `false`, a hop count, or a comma-separated list of IPs, CIDRs and the presets `loopback`, `linklocal`, `uniquelocal`; passed to Express `trust proxy` |
 
 The e2e test env uses Redis database 1 and the same Mailpit.
 

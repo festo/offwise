@@ -29,7 +29,7 @@ pnpm -r typecheck                  # typecheck everything
 pnpm -r test                       # unit tests everywhere
 pnpm -r format                     # prettier
 pnpm --filter @offwise/web storybook   # component review
-pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres: devcontainer or docker compose up -d db)
+pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres + redis: devcontainer or docker compose up -d db redis mailpit)
 ```
 
 Scaffolding must define `lint`, `typecheck`, `test` and `format` in every workspace; `test:e2e`, `migration:generate` and `migration:run` in api; and `storybook` and `build-storybook` in web. It must also define a compose service named `db`, because the agents depend on these names.

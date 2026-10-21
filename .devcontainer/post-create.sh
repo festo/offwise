@@ -15,8 +15,9 @@ pnpm exec playwright-mcp install-browser --with-deps --no-shell --no-progress ch
 
 [ -f apps/api/.env ] || cp apps/api/.env.example apps/api/.env
 
-# Wait for Postgres (shared network namespace: localhost).
+# Wait for Postgres and Redis (shared network namespace: localhost).
 timeout 60 bash -c 'until (echo > /dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 1; done'
+timeout 60 bash -c 'until (echo > /dev/tcp/127.0.0.1/6379) 2>/dev/null; do sleep 1; done'
 
 # ADR 0006: explicit setup commands; after pulling new code, run them again yourself.
 pnpm --filter @offwise/api migration:run

@@ -19,5 +19,9 @@ export function buildDataSourceOptions(
     namingStrategy: new SnakeNamingStrategy(),
     // Never migrate on startup; migrations run only through an explicit command.
     synchronize: false,
+    // PostgreSQL 13+ has gen_random_uuid() built in, so no extension is needed.
+    // The API must not run DDL (ADR 0006), so never let the driver install extensions.
+    uuidExtension: 'pgcrypto',
+    installExtensions: false,
   };
 }

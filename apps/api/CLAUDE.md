@@ -9,7 +9,7 @@ NestJS, TypeScript, PostgreSQL, class-validator / class-transformer (request DTO
 ## Commands
 
 ```bash
-docker compose up -d db                 # postgres for local dev and e2e
+docker compose up -d db redis mailpit  # postgres, redis, mail catcher for local dev and e2e
 pnpm --filter @offwise/api start:dev
 pnpm --filter @offwise/api lint
 pnpm --filter @offwise/api typecheck
@@ -22,6 +22,8 @@ pnpm --filter @offwise/api migration:run        # apply migrations
 ## Conventions
 
 - One Nest module per domain area in `src/modules/<area>/` (kebab-case, e.g. `src/modules/leave-requests/`): `<area>.module.ts`, `.controller.ts`, `.service.ts`, `dto/`, `entities/`, with unit tests (`*.spec.ts`) next to the code.
+- An area may add one `<area>-core.module.ts` next to its main module, holding only the services other modules or the install CLI need (e.g. `AuthCoreModule`, `UsersCoreModule`). It has no controllers or global guards and never imports its area's main module. Use it to avoid module cycles and to keep the CLI free of HTTP code; no other extra modules per area.
+- Code used only by the install command (such as the first-admin bootstrap) lives in `src/install/` and is provided by `InstallCliModule`.
 - Infrastructure that is not a domain feature stays directly under `src/`: `config/`, `database/`, `migrations/`, `install/`, `health/`, and `common/` for cross-cutting guards, interceptors, filters, pipes and decorators.
 - Controllers are thin: they parse, validate, and delegate. Business rules live in services.
 - Every request body and query uses a DTO class validated with class-validator; the global `ValidationPipe` uses `whitelist: true, forbidNonWhitelisted: true, transform: true`.
@@ -40,7 +42,9 @@ pnpm --filter @offwise/api migration:run        # apply migrations
 - E2E tests run against the `offwise_test` database (created by `docker/postgres/init`) and refuse any database whose name does not end in `_test`; use `createTestApp()`, `resetDatabase()` and `runApiCli()` (CLI commands as a child process) from `test/utils/`.
 - `TypeOrmModule` and `src/data-source.ts` share one options builder, so entities and connection settings never drift.
 - `synchronize: false` always.
+- UUID primary keys use `gen_random_uuid()` (`uuidExtension: 'pgcrypto'`, `installExtensions: false`); never add a DB extension at runtime.
 - Every table and column name is snake_case. `SnakeNamingStrategy` (`src/database/snake-naming.strategy.ts`) derives names from class and property names, so don't add `name:` overrides just to get snake_case; any explicit name must itself be snake_case. Hand-written migration SQL follows the same rule. `test/naming-convention.e2e-spec.ts` fails on any violation in the migrated schema.
+- No database enums (`CREATE TYPE ... AS ENUM`, `type: 'enum'`): store enum-like values as `varchar` and define the allowed values in code (a `const` array in `@offwise/shared`, validated with `@IsIn`).
 - Leave dates use `type: 'date'` columns (they come back as `YYYY-MM-DD` strings), never `timestamp`.
 - For any migration work, follow `.claude/skills/typeorm-migrations/SKILL.md`.
 - Every schema change ships with a migration in the same PR.

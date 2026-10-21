@@ -8,11 +8,19 @@ const apiRoot = join(__dirname, '..', '..');
 export function runApiCli(
   bin: string,
   args: string[],
-  options: { inheritOutput?: boolean } = {},
+  options: { inheritOutput?: boolean; env?: Record<string, string> } = {},
 ): SpawnSyncReturns<string> {
   const result = spawnSync(join(apiRoot, 'node_modules', '.bin', bin), args, {
     cwd: apiRoot,
-    env: { ...process.env, NODE_ENV: 'test', DATABASE_URL: TEST_DATABASE_URL },
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DATABASE_URL: TEST_DATABASE_URL,
+      // Blank (not deleted): dotenv would otherwise load the dev admin from apps/api/.env.
+      INITIAL_ADMIN_EMAIL: '',
+      INITIAL_ADMIN_PASSWORD: '',
+      ...options.env,
+    },
     encoding: 'utf8',
     stdio: options.inheritOutput ? 'inherit' : 'pipe',
   });
