@@ -38,6 +38,7 @@ Validated at API startup. A missing or invalid value stops the process with a cl
 | `REDIS_URL` | yes | Redis connection string for sessions and login throttling (ADR 0002) | 1 |
 | `PUBLIC_URL` | yes | Public web origin; used for email links, OIDC redirect URI, iCal URLs and cookie settings | 1 |
 | `SESSION_SECRET` | yes | Signs the session cookie | 1 |
+| `SESSION_IDLE_TIMEOUT_DAYS`, `SESSION_MAX_AGE_DAYS` | no (default 7, 30) | Session idle timeout and absolute cap | 1 |
 | `ENCRYPTION_KEY` | yes | 32-byte key (base64) that encrypts secrets stored in the DB (OIDC client secret, Slack token) | 1 |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SECURE` | host and port yes | Outgoing mail (password reset, notifications) | 1 |
 | `MAIL_FROM` | yes | Sender address | 1 |

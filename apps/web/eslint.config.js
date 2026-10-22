@@ -8,8 +8,9 @@ export default defineConfigWithVueTs(
   vueTsConfigs.recommended,
   skipFormatting,
   {
-    // shadcn-vue primitives use single-word names (Badge, Button).
+    // shadcn-vue primitives use single-word names (Badge, Button) and leave optional props
+    // such as `class` without defaults.
     files: ['src/components/ui/**/*.vue'],
-    rules: { 'vue/multi-word-component-names': 'off' },
+    rules: { 'vue/multi-word-component-names': 'off', 'vue/require-default-prop': 'off' },
   },
 );

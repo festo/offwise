@@ -32,7 +32,7 @@ Out of scope:
 - A `status` column. Module 18 adds it with the `pending_approval` value for SSO sign-ups.
 - The company settings screen and the user's own preferences screen (module 4).
 - `AUTH_FORCE_PASSWORD_LOGIN` (module 18; password login cannot be switched off before then).
-- Audit log search and export (module 15).
+- Audit log search and export (module 15). Module 15 also decides the audit log's retention period and how erasure requests apply to an append-only table (`before`/`after` hold names and emails), and whether security events need client IPs in a separate log with its own retention.
 - A second UI language (module 4).
 
 ## Decisions
@@ -46,7 +46,7 @@ Out of scope:
 | Locale | Users and the company store a BCP 47 locale (e.g. `en-GB`), not a language. The UI language is derived from it; module 4 uses it for date and number formats. Company default: `en-GB`. |
 | Password hashing | Argon2id via `@node-rs/argon2`, OWASP parameters (19 MiB, 2 iterations, parallelism 1), encoded hash string, rehash on login when parameters change. |
 | Password policy | 12 to 128 characters, no composition rules, no expiry (NIST 800-63B). No breached-password check. |
-| Sessions | Redis (ADR 0002). Sliding idle timeout 7 days, absolute cap 30 days. |
+| Sessions | Redis (ADR 0002). Sliding idle timeout (default 7 days) and absolute cap (default 30 days), set by `SESSION_IDLE_TIMEOUT_DAYS` and `SESSION_MAX_AGE_DAYS`. |
 | Throttling | 5 login attempts per email since the last successful login (or password reset), 30 per IP, per 15 min; 3 reset requests per email per hour. Every login attempt is counted atomically before the password is verified; a successful login gives its IP attempt back and clears the email counter, so the IP budget effectively counts failures. The client IP is `req.ip`, resolved through the proxies trusted by `TRUST_PROXY`. No permanent lockout. |
 | CSRF | Custom header plus Fetch Metadata with Origin fallback, `SameSite=Lax` as defence in depth (ADR 0002). |
 | Audit log | Generic event rows, append-only enforced by a database trigger; includes security events (logins, resets). |
@@ -66,7 +66,7 @@ One migration, generated with the TypeORM CLI. The trigger is added to the gener
 | `email` | varchar(254) | stored as entered |
 | `name` | varchar(200) | |
 | `password_hash` | text, nullable | null until a password is set; login always fails without one |
-| `role` | enum `employee`, `manager`, `admin`, `auditor` | default `employee` |
+| `role` | varchar(20), one of `employee`, `manager`, `admin`, `auditor` (`ROLES` in `@offwise/shared`, checked in code) | default `employee` |
 | `locale` | varchar(35), nullable | canonical BCP 47 tag; null means the company default |
 | `time_zone` | varchar(64), nullable | IANA name; null means the company default |
 | `created_at`, `updated_at` | timestamptz | |
@@ -96,7 +96,8 @@ Convention: TypeORM's `find` methods exclude soft-deleted rows. Anything that mu
 | `entity_type` | varchar(50), nullable | e.g. `user`, `settings` |
 | `entity_id` | varchar(100), nullable | |
 | `before`, `after` | jsonb, nullable | changed fields only; secrets redacted |
-| `ip` | inet, nullable | |
+
+No client IP is stored: an IP is personal data (GDPR), the append-only table cannot honour a retention period, and the events are useful without it. Client IPs exist only in the short-lived Redis throttle counters.
 
 Indexes on `occurred_at`, `(entity_type, entity_id)` and `actor_user_id`. A `BEFORE UPDATE OR DELETE` trigger raises an exception, so rows cannot be changed even by hand. `TRUNCATE` does not fire row triggers, so `resetDatabase()` in e2e tests keeps working.
 
@@ -204,9 +205,9 @@ The link is printed to stdout, where CI and container logs may keep it, so autom
 
 ### Audit
 
-`AuditService.record({ actor, action, entityType, entityId, before, after, ip })` takes the caller's `EntityManager`, so the event is written in the same transaction as the change it records. It has no update or delete method.
+`AuditService.record({ actor, action, entityId, before, after })` takes the caller's `EntityManager`, so the event is written in the same transaction as the change it records. It has no update or delete method.
 
-Module 1 actions: `user.created`, `user.updated`, `user.role_changed`, `user.closed`, `settings.updated`, `auth.login_succeeded`, `auth.login_failed`, `auth.logout`, `auth.password_reset_requested`, `auth.password_reset_completed`. `before` and `after` hold only the fields that changed.
+Actions and their entity types are registered in `src/audit/audit-actions.ts` (`AUDIT_ACTIONS`, action → entity type); `record` accepts only registered actions and sets `entity_type` from the registry, so neither can be mistyped. The columns stay varchar (no database enums). Module 1 actions: `user.created`, `user.updated`, `user.role_changed`, `user.closed`, `settings.updated`, `auth.login_succeeded`, `auth.login_failed`, `auth.logout`, `auth.password_reset_requested`, `auth.password_reset_completed`. `before` and `after` hold only the fields that changed.
 
 ### Mail
 
@@ -282,6 +283,8 @@ New environment variables (zod schema and `apps/api/.env.example`):
 | `REDIS_URL` | yes | `redis://` or `rediss://` URL; dev `redis://localhost:6379/0` |
 | `PUBLIC_URL` | yes | absolute `http(s)` URL; dev `http://localhost:5173` |
 | `SESSION_SECRET` | yes | at least 32 characters; the `.env.example` placeholder is rejected when `NODE_ENV=production` |
+| `SESSION_IDLE_TIMEOUT_DAYS` | no (default 7) | whole days, 1–365; not greater than `SESSION_MAX_AGE_DAYS` |
+| `SESSION_MAX_AGE_DAYS` | no (default 30) | whole days, 1–365; also the cookie `Max-Age` |
 | `ENCRYPTION_KEY` | yes | base64 that decodes to exactly 32 bytes; the `.env.example` placeholder is rejected when `NODE_ENV=production` |
 | `SMTP_HOST`, `SMTP_PORT` | yes | dev Mailpit `localhost`, `1025` |
 | `SMTP_USER`, `SMTP_PASSWORD` | no | |

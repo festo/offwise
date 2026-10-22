@@ -58,7 +58,8 @@ apps/api/src/
   modules/auth/password.service.ts, session.service.ts, throttle.service.ts, reset-token.service.ts,
               auth.service.ts, password-reset.service.ts, auth.controller.ts, session-cookie.ts,
               decorators.ts, throttled.exception.ts, guards/{csrf,auth,admin}.guard.ts,
-              auth-core.module.ts, auth.module.ts, initial-admin.service.ts, initial-admin.module.ts
+              auth-core.module.ts, auth.module.ts
+  install/initial-admin.service.ts
   migrations/<ts>-CreateIdentity.ts
 apps/api/test/  utils/redis.ts, utils/mailpit.ts, utils/http.ts, utils/factories.ts, *.e2e-spec.ts
 
@@ -172,7 +173,7 @@ Import it in `AppModule`. `test-env.ts` sets `REDIS_URL = TEST_REDIS_URL`, `PUBL
 - `ROLES = ['employee', 'manager', 'admin', 'auditor'] as const; type Role = (typeof ROLES)[number]` in `@offwise/shared`.
 - `User { id: string; email: string; name: string; passwordHash: string | null; role: Role; locale: string | null; timeZone: string | null; createdAt: Date; updatedAt: Date; deletedAt: Date | null }`
 - `Setting { namespace: string; value: Record<string, unknown>; updatedAt: Date; updatedByUserId: string | null }`
-- `AuditEvent { id: string; occurredAt: Date; actorUserId: string | null; action: string; entityType: string | null; entityId: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null; ip: string | null }`
+- `AuditEvent { id: string; occurredAt: Date; actorUserId: string | null; action: AuditAction; entityType: AuditEntityType | null; entityId: string | null; before: Record<string, unknown> | null; after: Record<string, unknown> | null }`
 
 - [ ] **Step 1: Failing e2e.** `test/identity-schema.e2e-spec.ts` (DataSource from `buildDataSourceOptions(TEST_DATABASE_URL)`, `resetDatabase` before each):
   - two non-deleted users with `A@x.io` and `a@x.io` → second insert fails with code `23505`;
@@ -189,7 +190,7 @@ export class User {
   @Column({ type: 'varchar', length: 254 }) email!: string;
   @Column({ type: 'varchar', length: 200 }) name!: string;
   @Column({ type: 'text', nullable: true }) passwordHash!: string | null;
-  @Column({ type: 'enum', enum: ROLES, enumName: 'user_role', default: 'employee' }) role!: Role;
+  @Column({ type: 'varchar', length: 20, default: 'employee' }) role!: Role;
   @Column({ type: 'varchar', length: 35, nullable: true }) locale!: string | null;
   @Column({ type: 'varchar', length: 64, nullable: true }) timeZone!: string | null;
   @CreateDateColumn({ type: 'timestamptz' }) createdAt!: Date;
@@ -200,7 +201,7 @@ export class User {
 
 `Setting`: `@Entity({ name: 'settings' })`, `@PrimaryColumn({ type: 'varchar', length: 100, primaryKeyConstraintName: 'PK_settings' }) namespace`, `@Column({ type: 'jsonb' }) value`, `@UpdateDateColumn({ type: 'timestamptz' }) updatedAt`, `@Column({ type: 'uuid', nullable: true }) updatedByUserId`, `@ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' }) @JoinColumn({ name: 'updated_by_user_id', foreignKeyConstraintName: 'FK_settings_updated_by_user' }) updatedBy`.
 
-`AuditEvent`: `@Entity({ name: 'audit_events' })`, uuid PK `PK_audit_events`, `@CreateDateColumn({ type: 'timestamptz' }) occurredAt` with `@Index('IDX_audit_events_occurred_at')`, `actorUserId` uuid nullable + `@ManyToOne(() => User)` join column `actor_user_id` (FK `FK_audit_events_actor_user`, `onDelete: 'NO ACTION'`) with `@Index('IDX_audit_events_actor_user_id')`, `action` varchar(100), `entityType` varchar(50) nullable, `entityId` varchar(100) nullable, class-level `@Index('IDX_audit_events_entity', ['entityType', 'entityId'])`, `before`/`after` jsonb nullable, `ip` `inet` nullable.
+`AuditEvent`: `@Entity({ name: 'audit_events' })`, uuid PK `PK_audit_events`, `@CreateDateColumn({ type: 'timestamptz' }) occurredAt` with `@Index('IDX_audit_events_occurred_at')`, `actorUserId` uuid nullable + `@ManyToOne(() => User)` join column `actor_user_id` (FK `FK_audit_events_actor_user`, `onDelete: 'NO ACTION'`) with `@Index('IDX_audit_events_actor_user_id')`, `action` varchar(100), `entityType` varchar(50) nullable, `entityId` varchar(100) nullable, class-level `@Index('IDX_audit_events_entity', ['entityType', 'entityId'])`, `before`/`after` jsonb nullable.
 
 Register all three in `entities.ts`.
 - [ ] **Step 3: Migration.** `migration:run`, then `migration:generate CreateIdentity`, then `format`. Append to `up()`:
@@ -226,13 +227,14 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 
 **Interfaces:**
 - `diffFields(before: Record<string, unknown>, after: Record<string, unknown>, redact?: readonly string[]): { before: Record<string, unknown>; after: Record<string, unknown> } | null` — only keys whose values differ (deep-equal via `JSON.stringify` of each value); redacted keys become `'[redacted]'`; `null` when nothing changed.
-- `interface AuditEventInput { actorUserId: string | null; action: string; entityType?: string; entityId?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null; ip?: string | null }`
+- `src/audit/audit-actions.ts`: `AUDIT_ENTITY_TYPES`, `AUDIT_ACTIONS` (action → entity type, `as const satisfies Record<string, AuditEntityType>`), `type AuditAction = keyof typeof AUDIT_ACTIONS`. `record` sets `entityType` from `AUDIT_ACTIONS[action]`.
+- `interface AuditEventInput { actorUserId: string | null; action: AuditAction; entityId?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null }`
 - `AuditService.record(manager: EntityManager, event: AuditEventInput): Promise<void>` (the only method). `AuditModule` is `@Global()`.
 - `canonicalLocale(value: string): string | null`; `@IsBcp47Locale()` class-validator decorator; `canonicalTimeZone(value: string): string | null` (via `new Intl.DateTimeFormat('en', { timeZone }).resolvedOptions().timeZone`); `@IsIanaTimeZone()`. Both are used with `@Transform` to canonicalise before validation.
 - `createSecretBox(base64Key: string): { encrypt(plain: string): string; decrypt(sealed: string): string }` — AES-256-GCM, 12-byte random IV, output `v1.<iv b64url>.<tag b64url>.<ciphertext b64url>`; `decrypt` throws on tampering.
 - `interface SettingsNamespace<T extends object> { name: string; dto: new () => T; defaults: T; secretFields: readonly (keyof T & string)[] }`
 - `class CompanySettingsDto { @IsString() @Length(1, 200) name!: string; @IsBcp47Locale() locale!: string }` (decorator from `modules/users/validation/locale.ts`, see below), `companySettings: SettingsNamespace<CompanySettingsDto> = { name: 'company', dto: CompanySettingsDto, defaults: { name: 'offwise', locale: 'en-GB' }, secretFields: [] }`, `COMPANY_DEFAULT_TIME_ZONE = 'UTC'`.
-- `SettingsService.get<T>(ns): Promise<T>` (stored over defaults, secret fields decrypted, cached per namespace); `SettingsService.set<T>(ns, value: T, actor: { userId: string | null; ip?: string | null }): Promise<void>` (validates with class-validator, throws `BadRequestException` with messages; encrypts secret fields; upserts; audits `settings.updated` with `entityType: 'settings'`, `entityId: ns.name`, diff with secret fields redacted, in one transaction; then clears the cache entry).
+- `SettingsService.get<T>(ns): Promise<T>` (stored over defaults, secret fields decrypted, cached per namespace); `SettingsService.set<T>(ns, value: T, actor: { userId: string | null }): Promise<void>` (validates with class-validator, throws `BadRequestException` with messages; encrypts secret fields; upserts; audits `settings.updated` (entity type `settings`) with `entityId: ns.name`, diff with secret fields redacted, in one transaction; then clears the cache entry).
 - `companyDefaultsStep: InstallStep = { name: 'company.defaults', run: manager => manager.createQueryBuilder().insert().into(Setting).values({ namespace: 'company', value: { ...companySettings.defaults } }).orIgnore().execute() }`.
 
 - [ ] **Step 1: Failing unit tests.** `locale.spec.ts`: `en-gb` → `en-GB`, `EN` → `en`, `hu-HU` → `hu-HU`, `en_GB` → null, `''` → null, `x` → null. `time-zone.spec.ts`: `Europe/Budapest` ok, `utc` → `UTC`, `Mars/Base` → null. `diff.spec.ts`: unchanged → `null`; changed keys only; added and removed keys; nested objects compared by value; redaction. `secret-box.spec.ts`: round trip; two encryptions differ; tampered ciphertext and wrong key throw; output starts with `v1.`. `company-defaults.step.spec.ts`: the step name is `company.defaults` and the defaults are `{ name: 'offwise', locale: 'en-GB' }`.
@@ -253,7 +255,7 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 
 **Interfaces:**
 - `newToken(): string` (32 random bytes, base64url); `hashToken(token: string): string` (SHA-256 hex).
-- `SESSION_IDLE_MS = 7 * 24 * 3600_000`, `SESSION_ABSOLUTE_MS = 30 * 24 * 3600_000`, `SESSION_TOUCH_INTERVAL_MS = 60_000`; `sessionTtlMs(createdAt: number, now: number): number` = `min(SESSION_IDLE_MS, createdAt + SESSION_ABSOLUTE_MS - now)` (≤ 0 means expired).
+- `sessionLifetime(env)` in `src/config/session-lifetime.ts` → `{ idleMs, absoluteMs }` from `SESSION_IDLE_TIMEOUT_DAYS` / `SESSION_MAX_AGE_DAYS`; `SessionService.lifetime` holds it. Touch interval `60_000` ms is a constant in `session.service.ts`. `sessionTtlMs(createdAt, now, lifetime): number` = `min(lifetime.idleMs, createdAt + lifetime.absoluteMs - now)` (≤ 0 means expired).
 - `interface SessionData { userId: string; createdAt: number; lastSeenAt: number }`
 - `SessionService.create(userId): Promise<string>` (returns the raw id; `HSET session:{hash}`, `PEXPIRE`, `SADD user-sessions:{userId} {hash}`, `PEXPIRE` the set to 30 days); `get(id): Promise<SessionData | null>` (returns null and deletes when past the absolute cap; refreshes `lastSeenAt` and TTL when `now - lastSeenAt ≥ 60 s`); `destroy(id): Promise<void>` (also `SREM`); `destroyAllForUser(userId): Promise<void>` (deletes every member key and the set).
 - `ThrottleService.hit(key, limit, windowSec): Promise<{ allowed: boolean; retryAfterSec: number }>` (`INCR`; on 1 set `EXPIRE`; `allowed = count <= limit`; `retryAfterSec` from `TTL`); `isBlocked(key, limit): Promise<{ blocked: boolean; retryAfterSec: number }>` (reads without incrementing; blocked when `count >= limit`); `clear(key): Promise<void>`.
@@ -281,9 +283,9 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 **Interfaces:**
 - Shared: `CSRF_HEADER = 'X-Requested-With'`, `CSRF_HEADER_VALUE = 'offwise'`, `PASSWORD_MIN_LENGTH = 12`, `PASSWORD_MAX_LENGTH = 128`; `interface CurrentUser { id: string; name: string; email: string; role: Role; locale: string | null; timeZone: string | null; effectiveLocale: string; effectiveTimeZone: string }`; `LoginRequest { email: string; password: string }`; `PasswordResetRequest { email: string }`; `PasswordResetConfirmRequest { token: string; password: string }`; `interface ApiErrorBody { statusCode: number; message: string | string[]; error?: string; field?: string; rule?: string; retryAfter?: number }`.
 - `@Public()`, `@AdminOnly()` (metadata keys `IS_PUBLIC`, `IS_ADMIN_ONLY`); `@AuthUser()` param decorator returning `req.user: User`; `AuthenticatedRequest = Request & { user: User; sessionId: string }`.
-- `SESSION_COOKIE = 'offwise_session'`; `sessionCookieOptions(nodeEnv): CookieOptions` = `{ httpOnly: true, sameSite: 'lax', secure: nodeEnv !== 'development', path: '/api', signed: true, maxAge: SESSION_ABSOLUTE_MS }`.
+- `SESSION_COOKIE = 'offwise_session'`; `sessionCookieOptions(nodeEnv, maxAgeMs): CookieOptions` = `{ httpOnly: true, sameSite: 'lax', secure: nodeEnv !== 'development', path: '/api', signed: true, maxAge: maxAgeMs }` (the controller passes `SessionService.lifetime.absoluteMs`).
 - `ThrottledException(retryAfterSec)` → 429 with body `{ statusCode: 429, message: 'Too many attempts. Try again later.', retryAfter }`; `ThrottledExceptionFilter` sets the `Retry-After` header.
-- `AuthService.login(email, password, ip): Promise<{ user: User; sessionId: string }>` (flow in spec; throws `UnauthorizedException('Invalid email or password')` or `ThrottledException`); `logout(sessionId, user, ip)`; `toCurrentUser(user): Promise<CurrentUser>` (uses `SettingsService.get(companySettings)` and `COMPANY_DEFAULT_TIME_ZONE`).
+- `AuthService.login(email, password, ip): Promise<{ user: User; sessionId: string }>` (flow in spec; throws `UnauthorizedException('Invalid email or password')` or `ThrottledException`); `logout(sessionId, user)`; `toCurrentUser(user): Promise<CurrentUser>` (uses `SettingsService.get(companySettings)` and `COMPANY_DEFAULT_TIME_ZONE`).
 - Guards registered in `AuthModule` as `APP_GUARD` in this order: `CsrfGuard`, `AuthGuard`, `AdminGuard`.
 
 - [ ] **Step 1:** `pnpm --filter @offwise/api add cookie-parser` and `-D @types/cookie-parser`. `configureApp` adds `app.use(cookieParser(SESSION_SECRET))` (read from `app.get(ConfigService)`) and `app.useGlobalFilters(new ThrottledExceptionFilter())`.
@@ -313,7 +315,7 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 **Interfaces:**
 - `MailService.send({ to, subject, text, html }): Promise<void>` (nodemailer transport from env; `auth` only when `SMTP_USER` is set).
 - `passwordResetEmail({ name, link }): { subject: string; text: string; html: string }` — subject `Reset your offwise password`; text and HTML contain the link and say it expires in 1 hour; the name is HTML-escaped in the HTML part.
-- `PasswordResetService.request(email, ip): Promise<void>` (throttle `hit` on `resetEmailKey` → `ThrottledException` when not allowed; then `setImmediate` a background job that finds the non-deleted user, creates a token, sends the email, audits `auth.password_reset_requested`; errors are logged, never thrown); `confirm(token, password, ip): Promise<void>` (`consume` → `BadRequestException('This reset link is invalid or has expired.')` when null or the user is closed; hash, save, `revokeAllForUser`, `destroyAllForUser`, audit `auth.password_reset_completed`).
+- `PasswordResetService.request(email): Promise<void>` (throttle `hit` on `resetEmailKey` → `ThrottledException` when not allowed; then `setImmediate` a background job that finds the non-deleted user, creates a token, sends the email, audits `auth.password_reset_requested`; errors are logged, never thrown); `confirm(token, password): Promise<void>` (`consume` → `BadRequestException('This reset link is invalid or has expired.')` when null or the user is closed; hash, save, `revokeAllForUser`, `destroyAllForUser`, audit `auth.password_reset_completed`).
 - Mailpit helper: `MAILPIT_URL` (default `http://localhost:8025`, override `E2E_MAILPIT_URL`); `clearMailbox()` (`DELETE /api/v1/messages`); `waitForMessageTo(email, timeoutMs = 5000): Promise<{ Subject: string; Text: string; HTML: string }>` (polls `GET /api/v1/search?query=to:"<email>"`, then `GET /api/v1/message/<ID>`); `extractResetToken(text): string` (regex `#token=([A-Za-z0-9_-]+)`).
 
 - [ ] **Step 1:** `pnpm --filter @offwise/api add nodemailer` and `-D @types/nodemailer`.
@@ -337,7 +339,7 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 
 **Interfaces:**
 - Shared: `UserDto { id; name; email; role: Role; locale: string | null; timeZone: string | null; hasPassword: boolean; createdAt: string; closedAt: string | null }`; `Page<T> { items: T[]; total: number; page: number; pageSize: number }`; `UserListQuery { search?: string; includeClosed?: boolean; page?: number; pageSize?: number }`; `CreateUserRequest { name; email; role: Role; locale?: string | null; timeZone?: string | null }`; `UpdateUserRequest = Partial<CreateUserRequest>`.
-- `UsersService.list(query): Promise<Page<UserDto>>`; `get(id): Promise<UserDto>`; `create(dto, actor: { userId: string; ip: string | null }): Promise<UserDto>`; `update(id, dto, actor)`; `close(id, actor): Promise<void>`.
+- `UsersService.list(query): Promise<Page<UserDto>>`; `get(id): Promise<UserDto>`; `create(dto, actor: { userId: string }): Promise<UserDto>`; `update(id, dto, actor)`; `close(id, actor): Promise<void>`.
 - Conflicts: `ConflictException({ statusCode: 409, message: 'A user with this email already exists.', field: 'email' })` and `ConflictException({ statusCode: 409, message: 'The last active admin cannot be closed or lose the admin role.', rule: 'last-admin' })`.
 
 - [ ] **Step 1: Failing e2e** `users.e2e-spec.ts` (admin signed in via `signIn`):
@@ -354,14 +356,14 @@ and prepend the matching drops to `down()` (`DROP TRIGGER`, `DROP FUNCTION`, `DR
 ### Task 9: First-admin bootstrap in the install command
 
 **Files:**
-- Create: `apps/api/src/modules/auth/initial-admin.service.ts`, `initial-admin.module.ts`
+- Create: `apps/api/src/install/initial-admin.service.ts` (provided by `InstallCliModule`; no module of its own)
 - Modify: `apps/api/src/install/install-cli.module.ts`, `apps/api/src/install.ts`
 - Test: `apps/api/test/initial-admin.e2e-spec.ts`; modify `apps/api/test/install-steps.e2e-spec.ts`
 
 **Interfaces:**
 - `type InitialAdminOutcome = 'skipped-not-configured' | 'skipped-admin-exists' | 'promoted' | 'created-with-password' | 'created-with-link'`.
 - `InitialAdminService.run({ email?: string; password?: string; publicUrl: string }): Promise<{ outcome: InitialAdminOutcome; resetLink?: string }>`; runs in one transaction with the advisory lock `4242002`; audits `user.created` or `user.role_changed` with `actorUserId: null`; for `created-with-link` creates a reset token with `BOOTSTRAP_RESET_TTL_SEC` after commit and returns the link.
-- `InstallCliModule` imports `RedisModule`, `AuditModule`, `AuthCoreModule`, `InitialAdminModule` (no `AuthModule`: no guards in the CLI).
+- `InstallCliModule` imports `RedisModule`, `AuditModule`, `AuthCoreModule`, `UsersCoreModule` and provides `InitialAdminService` (no `AuthModule`: no guards in the CLI).
 - `install.ts` after the steps: runs the service with env values and prints `Initial admin: <outcome>`; for `created-with-link`, prints `Set the initial admin password within 24 hours: <link>`.
 
 - [ ] **Step 1: Failing e2e:** not configured → skipped; admin exists → skipped and nothing changes; existing employee with that email → promoted; new email with password → created, can log in through the API; new email without password → link returned, the token in it works with `POST /auth/password-reset/confirm`. CLI: with `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` in the child env, `install:run` exits 0 and prints `Initial admin: created-with-password`; second run prints `Initial admin: skipped-admin-exists`.

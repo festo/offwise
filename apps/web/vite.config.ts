@@ -15,6 +15,9 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind all interfaces: in the devcontainer Vite otherwise listens only on [::1],
+    // which the forwarded port (IPv4) cannot reach.
+    host: true,
     port: 5173,
     proxy: { '/api': 'http://localhost:3000' },
   },

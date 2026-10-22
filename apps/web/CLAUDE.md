@@ -40,7 +40,7 @@ Every screen works on a phone, from the first version of the screen.
 
 ## Storybook
 
-- Every component has a co-located `<Component>.stories.ts` (CSF3): everything in `src/components/` (including shadcn primitives in `src/components/ui/`, one story per variant) and in `src/features/*/components/`. Pages and `App.vue` are excluded. `src/stories-coverage.spec.ts` fails on any component without a story, so adding a shadcn primitive with the CLI means adding its story in the same change.
+- Every component has a co-located `<Component>.stories.ts` (CSF3): everything in `src/components/` and in `src/features/*/components/`. Shadcn primitives in `src/components/ui/<name>/` need one stories file per folder covering its variants. Pages and `App.vue` are excluded. `src/stories-coverage.spec.ts` fails on any component without a story, so adding a shadcn primitive with the CLI means adding its story in the same change.
 - Cover the meaningful states: default, loading, empty, error, and disabled where relevant.
 - Stories use static props or mocked data; no real network calls.
 
