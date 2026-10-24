@@ -61,4 +61,5 @@ These paths override the Superpowers defaults: specs go in `docs/specs/` and pla
 - Decisions that change the stack or architecture get an ADR in `docs/decisions/`.
 - Don't claim something works without running the relevant lint, typecheck, and tests and reading their output.
 - Leave domain logic (balances, accrual, approvals, holidays) in the API; the web app displays and submits, it does not compute entitlements.
+- Build for small companies, not high load. offwise serves relatively small companies, not thousands of requests per second. Don't add caches (process-wide or cross-request), replicas-aware invalidation, or other high-load engineering at this stage; a plain database read is fine. Caching for the length of a single request is acceptable when one request repeats the same lookup.
 - Personal Claude settings go in `.claude/settings.local.json` (gitignored), not `.claude/settings.json`.

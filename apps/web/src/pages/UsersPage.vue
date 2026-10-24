@@ -41,6 +41,8 @@ function readQuery(): void {
 watch(
   () => route.query,
   () => {
+    // Leaving for another route changes the query before this page unmounts; ignore that.
+    if (route.name !== 'users') return;
     readQuery();
     void users.fetch();
   },

@@ -3,10 +3,12 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthLayout from '@/components/AuthLayout.vue';
 import ForgotPasswordForm from '@/features/auth/components/ForgotPasswordForm.vue';
+import { usePasswordReset } from '@/features/auth/composables/usePasswordReset';
 import { tooManyAttemptsMessage } from '@/features/auth/lib/tooManyAttempts';
-import { ApiError, apiPost } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 
 const { t } = useI18n();
+const { requestReset } = usePasswordReset();
 const pending = ref(false);
 const sent = ref(false);
 const error = ref<string | null>(null);
@@ -15,7 +17,7 @@ async function onSubmit({ email }: { email: string }) {
   pending.value = true;
   error.value = null;
   try {
-    await apiPost('/auth/password-reset', { email });
+    await requestReset(email);
     sent.value = true;
   } catch (e) {
     error.value =

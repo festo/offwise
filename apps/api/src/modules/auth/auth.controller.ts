@@ -34,9 +34,13 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<CurrentUser> {
-    const { user, sessionId } = await this.auth.login(dto.email, dto.password, req.ip ?? null);
     const previous: unknown = req.signedCookies?.[SESSION_COOKIE];
-    if (typeof previous === 'string' && previous !== '') await this.auth.discardSession(previous);
+    const { user, sessionId } = await this.auth.login(
+      dto.email,
+      dto.password,
+      req.ip ?? null,
+      typeof previous === 'string' && previous !== '' ? previous : null,
+    );
     res.cookie(
       SESSION_COOKIE,
       sessionId,
@@ -63,8 +67,8 @@ export class AuthController {
   @Public()
   @Post('password-reset')
   @HttpCode(HttpStatus.ACCEPTED)
-  async requestPasswordReset(@Body() dto: PasswordResetDto): Promise<void> {
-    await this.passwordReset.request(dto.email);
+  async requestPasswordReset(@Body() dto: PasswordResetDto, @Req() req: Request): Promise<void> {
+    await this.passwordReset.request(dto.email, req.ip ?? 'unknown');
   }
 
   @Public()

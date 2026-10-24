@@ -150,6 +150,14 @@ describe('UsersPage', () => {
     expect(router.currentRoute.value.fullPath).toBe('/admin/users/u2');
   });
 
+  it('does not refetch the list when leaving for a user page', async () => {
+    const { router } = await render('/admin/users?search=gr');
+    vi.mocked(apiGet).mockClear();
+    await router.push({ name: 'user-edit', params: { id: 'u2' } });
+    await flushPromises();
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
   it('links to the create page', async () => {
     const { wrapper } = await render();
     expect(wrapper.get('a[href="/admin/users/new"]').text()).toContain('Add user');

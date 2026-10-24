@@ -2,8 +2,10 @@ import type { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuditEvent } from '../src/audit/audit-event.entity';
+import { AuditService } from '../src/audit/audit.service';
 import { ResetTokenService } from '../src/modules/auth/reset-token.service';
 import { SessionService } from '../src/modules/auth/session.service';
+import { ThrottleService } from '../src/modules/auth/throttle.service';
 import { User } from '../src/modules/users/entities/user.entity';
 import { createTestApp } from './utils/create-test-app';
 import { createUser } from './utils/factories';
@@ -168,6 +170,17 @@ describe('Password reset (e2e)', () => {
     await waitForResets(user.email, 3);
   });
 
+  it('throttles a single IP after 20 requests within the hour, across emails', async () => {
+    for (let i = 0; i < 20; i++) {
+      expect((await requestReset(`nobody-${i}@example.test`)).status, `request ${i + 1}`).toBe(202);
+    }
+    const res = await requestReset('nobody-20@example.test');
+    expect(res.status).toBe(429);
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    // Let the background lookups for the unknown emails finish before the next test.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+
   it('audits the request and the completion', async () => {
     const user = await createUser(dataSource, { password: OLD_PASSWORD });
     const token = await tokenFor(user.email);
@@ -183,26 +196,47 @@ describe('Password reset (e2e)', () => {
   it.each([
     ['revoking the reset tokens', () => vi.spyOn(app.get(ResetTokenService), 'revokeAllForUser')],
     ['ending the sessions', () => vi.spyOn(app.get(SessionService), 'destroyAllForUser')],
-  ])('keeps the old password when %s fails', async (_, spy) => {
+    ['clearing the login throttle', () => vi.spyOn(app.get(ThrottleService), 'clear')],
+  ])('commits the new password even when %s fails', async (_, spy) => {
+    const user = await createUser(dataSource, { password: OLD_PASSWORD });
+    const { agent } = await signIn(app, user.email, OLD_PASSWORD);
+    const token = await tokenFor(user.email);
+    spy().mockRejectedValueOnce(new Error('redis down'));
+
+    await api(app)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token, password: NEW_PASSWORD })
+      .expect(204);
+
+    const actions = (await dataSource.getRepository(AuditEvent).find()).map((e) => e.action);
+    expect(actions).toContain('auth.password_reset_completed');
+    await agent.get('/api/auth/me').expect(401);
+    await api(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: NEW_PASSWORD })
+      .expect(200);
+  });
+
+  it('keeps the old password and leaves Redis alone when the transaction fails', async () => {
     const user = await createUser(dataSource, { password: OLD_PASSWORD });
     const before = (await dataSource.getRepository(User).findOneByOrFail({ id: user.id }))
       .passwordHash;
     const token = await tokenFor(user.email);
-    spy().mockRejectedValueOnce(new Error('redis down'));
+    vi.spyOn(app.get(AuditService), 'record').mockRejectedValueOnce(new Error('db down'));
+    const revoke = vi.spyOn(app.get(ResetTokenService), 'revokeAllForUser');
+    const destroy = vi.spyOn(app.get(SessionService), 'destroyAllForUser');
+    const clear = vi.spyOn(app.get(ThrottleService), 'clear');
 
-    const res = await api(app)
+    await api(app)
       .post('/api/auth/password-reset/confirm')
-      .send({ token, password: NEW_PASSWORD });
-    expect(res.status).toBe(500);
+      .send({ token, password: NEW_PASSWORD })
+      .expect(500);
 
     const after = await dataSource.getRepository(User).findOneByOrFail({ id: user.id });
     expect(after.passwordHash).toBe(before);
-    const actions = (await dataSource.getRepository(AuditEvent).find()).map((e) => e.action);
-    expect(actions).not.toContain('auth.password_reset_completed');
-    await api(app)
-      .post('/api/auth/login')
-      .send({ email: user.email, password: OLD_PASSWORD })
-      .expect(200);
+    expect(revoke).not.toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
   });
 
   it('clears the login throttle for the email after a successful reset', async () => {

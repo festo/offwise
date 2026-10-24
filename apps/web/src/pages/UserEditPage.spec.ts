@@ -12,7 +12,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { ApiError, apiDelete, apiGet, apiPatch } from '@/lib/api';
 import { resetSessionForTests } from '@/features/auth/composables/useSession';
 import UserEditPage from './UserEditPage.vue';
-import { grace, mountPage, signInAsAdmin } from './page-test-utils';
+import { adminUser, grace, mountPage, signInAsAdmin } from './page-test-utils';
+import { useSession } from '@/features/auth/composables/useSession';
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -143,5 +144,83 @@ describe('UserEditPage', () => {
     const { wrapper } = await render();
     expect(wrapper.findAll('button').some((b) => b.text() === 'Close account')).toBe(false);
     expect(wrapper.text()).toContain('This account is closed.');
+  });
+
+  it('clears the saved note when switching to another user', async () => {
+    const { wrapper, router } = await render();
+    vi.mocked(apiPatch).mockResolvedValueOnce({ ...grace, name: 'Grace B. Hopper' });
+    await wrapper.get('input[name="name"]').setValue('Grace B. Hopper');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toBe('Changes saved.');
+    vi.mocked(apiGet).mockResolvedValueOnce({ ...grace, id: 'u3', name: 'Alan Turing' });
+    await router.push('/admin/users/u3');
+    await flushPromises();
+    expect(wrapper.get('h1').text()).toBe('Alan Turing');
+    expect(wrapper.find('[role="status"]').exists()).toBe(false);
+  });
+
+  it('clears form errors when switching to another user', async () => {
+    const { wrapper, router } = await render();
+    vi.mocked(apiPatch).mockRejectedValueOnce(
+      new ApiError(409, 'x', { statusCode: 409, message: 'x', rule: 'last-admin' }),
+    );
+    await wrapper.get('input[name="name"]').setValue('Someone');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    vi.mocked(apiGet).mockResolvedValueOnce({ ...grace, id: 'u3', name: 'Alan Turing' });
+    await router.push('/admin/users/u3');
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+
+  describe('editing your own account', () => {
+    const self = {
+      ...grace,
+      id: adminUser.id,
+      name: adminUser.name,
+      email: adminUser.email,
+      role: 'admin' as const,
+    };
+
+    function mockGets(me: typeof adminUser) {
+      vi.mocked(apiGet).mockImplementation(async (path: string) =>
+        path === '/auth/me' ? me : self,
+      );
+    }
+
+    it('refreshes the session so a new locale is applied', async () => {
+      mockGets({ ...adminUser, locale: 'hu-HU' });
+      const { wrapper, router } = await render(`/admin/users/${adminUser.id}`);
+      vi.mocked(apiPatch).mockResolvedValueOnce({ ...self, locale: 'hu-HU' });
+      await wrapper.get('input[name="name"]').setValue('Ada King');
+      await wrapper.get('form').trigger('submit');
+      await flushPromises();
+      expect(apiGet).toHaveBeenCalledWith('/auth/me');
+      expect(useSession().user.value?.locale).toBe('hu-HU');
+      expect(document.documentElement.lang).toBe('hu-HU');
+      expect(router.currentRoute.value.name).toBe('user-edit');
+    });
+
+    it('leaves the admin page after demoting yourself', async () => {
+      mockGets({ ...adminUser, role: 'employee' });
+      const { wrapper, router } = await render(`/admin/users/${adminUser.id}`);
+      vi.mocked(apiPatch).mockResolvedValueOnce({ ...self, role: 'employee' });
+      await wrapper.get('input[name="name"]').setValue('Ada King');
+      await wrapper.get('form').trigger('submit');
+      await flushPromises();
+      expect(useSession().isAdmin.value).toBe(false);
+      expect(router.currentRoute.value.name).toBe('home');
+    });
+
+    it('does not refresh the session when editing someone else', async () => {
+      const { wrapper } = await render();
+      vi.mocked(apiPatch).mockResolvedValueOnce({ ...grace, name: 'Grace B. Hopper' });
+      await wrapper.get('input[name="name"]').setValue('Grace B. Hopper');
+      await wrapper.get('form').trigger('submit');
+      await flushPromises();
+      expect(apiGet).not.toHaveBeenCalledWith('/auth/me');
+    });
   });
 });

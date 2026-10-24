@@ -4,10 +4,12 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import AuthLayout from '@/components/AuthLayout.vue';
 import ResetPasswordForm from '@/features/auth/components/ResetPasswordForm.vue';
+import { usePasswordReset } from '@/features/auth/composables/usePasswordReset';
 import { tooManyAttemptsMessage } from '@/features/auth/lib/tooManyAttempts';
-import { ApiError, apiPost } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 
 const { t } = useI18n();
+const { confirmReset } = usePasswordReset();
 const router = useRouter();
 
 // The token travels in the URL fragment so it never reaches server logs; read it once and
@@ -24,7 +26,7 @@ async function onSubmit({ password }: { password: string }) {
   pending.value = true;
   error.value = null;
   try {
-    await apiPost('/auth/password-reset/confirm', { token, password });
+    await confirmReset(token, password);
     await router.replace({ name: 'login', query: { reset: '1' } });
   } catch (e) {
     error.value =

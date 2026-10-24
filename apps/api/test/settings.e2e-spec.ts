@@ -102,11 +102,20 @@ describe('SettingsService (e2e)', () => {
     expect(await dataSource.getRepository(AuditEvent).count()).toBe(1);
   });
 
-  it('get after set returns the new value (cache invalidated)', async () => {
+  it('get after set returns the new value', async () => {
     await settings.set(sample, { title: 'A' }, { userId: null });
     await expect(settings.get(sample)).resolves.toEqual({ title: 'A' });
     await settings.set(sample, { title: 'B' }, { userId: null });
     await expect(settings.get(sample)).resolves.toEqual({ title: 'B' });
+  });
+
+  it('get reads the stored row every time (no per-process cache)', async () => {
+    await settings.set(sample, { title: 'A' }, { userId: null });
+    await expect(settings.get(sample)).resolves.toEqual({ title: 'A' });
+    await dataSource
+      .getRepository(Setting)
+      .update({ namespace: sample.name }, { value: { title: 'Changed elsewhere' } });
+    await expect(settings.get(sample)).resolves.toEqual({ title: 'Changed elsewhere' });
   });
 
   it('stores the transformed value', async () => {

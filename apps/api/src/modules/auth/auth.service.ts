@@ -18,6 +18,7 @@ import {
   ThrottleService,
 } from './throttle.service';
 import { ThrottledException } from './throttled.exception';
+import { credentialFingerprint } from './tokens';
 
 export const INVALID_CREDENTIALS = 'Invalid email or password';
 
@@ -37,6 +38,7 @@ export class AuthService {
     email: string,
     password: string,
     ip: string | null,
+    previousSessionId: string | null,
   ): Promise<{ user: User; sessionId: string }> {
     const emailKey = loginEmailKey(email);
     const ipKey = loginIpKey(ip ?? 'unknown');
@@ -72,18 +74,18 @@ export class AuthService {
         .getRepository(User)
         .update({ id: user.id }, { passwordHash: user.passwordHash });
     }
-    const sessionId = await this.sessions.create(user.id);
+    // Only now, with the password verified: replace the session left over from an earlier sign-in.
+    if (previousSessionId) await this.sessions.destroy(previousSessionId);
+    const sessionId = await this.sessions.create(
+      user.id,
+      credentialFingerprint(user.passwordHash!),
+    );
     await this.audit.record(this.dataSource.manager, {
       actorUserId: user.id,
       action: 'auth.login_succeeded',
       entityId: user.id,
     });
     return { user, sessionId };
-  }
-
-  /** Destroys a session left over from an earlier sign-in; a no-op if it no longer exists. */
-  async discardSession(sessionId: string): Promise<void> {
-    await this.sessions.destroy(sessionId);
   }
 
   async logout(sessionId: string, user: User): Promise<void> {

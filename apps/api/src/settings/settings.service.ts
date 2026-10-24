@@ -21,7 +21,6 @@ function flattenErrors(errors: ValidationError[], prefix = ''): string[] {
 @Injectable()
 export class SettingsService {
   private readonly box: SecretBox;
-  private readonly cache = new Map<string, Record<string, unknown>>();
 
   constructor(
     private readonly dataSource: DataSource,
@@ -31,17 +30,13 @@ export class SettingsService {
     this.box = createSecretBox(config.get('ENCRYPTION_KEY', { infer: true }));
   }
 
-  /** Stored value over defaults, secret fields decrypted. Cached per namespace per process. */
+  /**
+   * Stored value over defaults, secret fields decrypted. Reads the row on every call: no cache, so
+   * every API instance sees a change immediately (callers read it about once per request).
+   */
   async get<T extends object>(ns: SettingsNamespace<T>): Promise<T> {
-    const cached = this.cache.get(ns.name);
-    if (cached) return { ...cached } as T;
     const row = await this.dataSource.getRepository(Setting).findOneBy({ namespace: ns.name });
-    const merged = { ...ns.defaults, ...this.decryptSecrets(ns, row?.value ?? {}) } as Record<
-      string,
-      unknown
-    >;
-    this.cache.set(ns.name, merged);
-    return { ...merged } as T;
+    return { ...ns.defaults, ...this.decryptSecrets(ns, row?.value ?? {}) } as T;
   }
 
   async set<T extends object>(
@@ -82,7 +77,6 @@ export class SettingsService {
         after: diff.after,
       });
     });
-    this.cache.delete(ns.name);
   }
 
   private encryptSecrets<T extends object>(

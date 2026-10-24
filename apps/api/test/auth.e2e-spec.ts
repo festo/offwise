@@ -3,10 +3,14 @@ import { hash, parseOptions } from '@node-rs/argon2';
 import type { CurrentUser } from '@offwise/shared';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Redis } from 'ioredis';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuditEvent } from '../src/audit/audit-event.entity';
-import { ARGON2_OPTIONS } from '../src/modules/auth/password.service';
+import { ARGON2_OPTIONS, PasswordService } from '../src/modules/auth/password.service';
+import { SessionService } from '../src/modules/auth/session.service';
+import { hashToken } from '../src/modules/auth/tokens';
 import { User } from '../src/modules/users/entities/user.entity';
+import { REDIS } from '../src/redis/redis.constants';
 import { createTestApp } from './utils/create-test-app';
 import { createUser } from './utils/factories';
 import { api, sessionCookieFrom, signIn } from './utils/http';
@@ -33,6 +37,10 @@ describe('Auth (e2e)', () => {
   beforeEach(async () => {
     await resetDatabase(dataSource);
     await flushTestRedis();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
@@ -225,11 +233,41 @@ describe('Auth (e2e)', () => {
       await api(app).get('/api/auth/me').set('Cookie', newCookie).expect(200);
     });
 
+    it('keeps the previous session when the new login fails', async () => {
+      await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      const { cookie: oldCookie } = await signIn(app, 'a@example.test', PASSWORD);
+      await api(app)
+        .post('/api/auth/login')
+        .set('Cookie', oldCookie)
+        .send({ email: 'a@example.test', password: 'wrong password!!' })
+        .expect(401);
+      await api(app).get('/api/auth/me').set('Cookie', oldCookie).expect(200);
+    });
+
+    it('creates no session and no success audit when discarding the previous session fails', async () => {
+      await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      const { cookie: oldCookie } = await signIn(app, 'a@example.test', PASSWORD);
+      const sessions = app.get(SessionService);
+      vi.spyOn(sessions, 'destroy').mockRejectedValueOnce(new Error('redis down'));
+      const create = vi.spyOn(sessions, 'create');
+
+      const res = await api(app)
+        .post('/api/auth/login')
+        .set('Cookie', oldCookie)
+        .send({ email: 'a@example.test', password: PASSWORD })
+        .expect(500);
+
+      expect(sessionCookieFrom(res)).toBeUndefined();
+      expect(create).not.toHaveBeenCalled();
+      expect(await app.get<Redis>(REDIS).keys('session:*')).toHaveLength(1);
+      expect(await auditActions()).toEqual(['auth.login_succeeded']);
+    });
+
     it('rehashes a password stored with outdated parameters', async () => {
       const weak = await hash(PASSWORD, { ...ARGON2_OPTIONS, timeCost: 1 });
       const user = await createUser(dataSource, { email: 'old@example.test', passwordHash: weak });
 
-      await api(app)
+      const res = await api(app)
         .post('/api/auth/login')
         .send({ email: 'old@example.test', password: PASSWORD })
         .expect(200);
@@ -237,6 +275,8 @@ describe('Auth (e2e)', () => {
       const stored = await dataSource.getRepository(User).findOneByOrFail({ id: user.id });
       expect(stored.passwordHash).not.toBe(weak);
       expect(parseOptions(stored.passwordHash!).timeCost).toBe(ARGON2_OPTIONS.timeCost);
+      // The session is bound to the new hash, so it stays valid after the rehash.
+      await api(app).get('/api/auth/me').set('Cookie', sessionCookieFrom(res)!).expect(200);
     });
 
     it('audits failed and successful logins', async () => {
@@ -320,6 +360,57 @@ describe('Auth (e2e)', () => {
       await agent.post('/api/auth/logout').expect(204);
       const res = await api(app).get('/api/auth/me').set('Cookie', cookie).expect(401);
       expect(setCookies(res).some((c) => /^offwise_session=;/.test(c))).toBe(true);
+    });
+
+    it('rejects a session created by a login that raced a password reset', async () => {
+      // The login verified the old password; the reset then commits the new hash and ends all
+      // sessions before the login stores its session, so destroyAllForUser never sees it.
+      const user = await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      const sessions = app.get(SessionService);
+      const create = sessions.create.bind(sessions);
+      vi.spyOn(sessions, 'create').mockImplementation(async (userId, fingerprint) => {
+        const newHash = await app.get(PasswordService).hash('a brand new password');
+        await dataSource.getRepository(User).update({ id: user.id }, { passwordHash: newHash });
+        await sessions.destroyAllForUser(user.id);
+        return create(userId, fingerprint);
+      });
+      const res = await api(app)
+        .post('/api/auth/login')
+        .send({ email: 'a@example.test', password: PASSWORD })
+        .expect(200);
+      vi.restoreAllMocks();
+      const cookie = sessionCookieFrom(res)!;
+      const me = await api(app).get('/api/auth/me').set('Cookie', cookie).expect(401);
+      expect(setCookies(me).some((c) => /^offwise_session=;/.test(c))).toBe(true);
+      const redis = app.get<Redis>(REDIS);
+      expect(await redis.keys('session:*')).toEqual([]);
+    });
+
+    it('returns 401 once the password changed after sign-in', async () => {
+      const user = await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      const { agent } = await signIn(app, 'a@example.test', PASSWORD);
+      const newHash = await app.get(PasswordService).hash('a brand new password');
+      await dataSource.getRepository(User).update({ id: user.id }, { passwordHash: newHash });
+      await agent.get('/api/auth/me').expect(401);
+    });
+
+    it('returns 401 for a session without a credential fingerprint', async () => {
+      await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      const { agent } = await signIn(app, 'a@example.test', PASSWORD);
+      const redis = app.get<Redis>(REDIS);
+      const [key] = await redis.keys('session:*');
+      await redis.hdel(key!, 'credentialFingerprint');
+      await agent.get('/api/auth/me').expect(401);
+      expect(await redis.exists(key!)).toBe(0);
+    });
+
+    it('binds the session to the fingerprint of the current password hash', async () => {
+      const user = await createUser(dataSource, { email: 'a@example.test', password: PASSWORD });
+      await signIn(app, 'a@example.test', PASSWORD);
+      const stored = await dataSource.getRepository(User).findOneByOrFail({ id: user.id });
+      const redis = app.get<Redis>(REDIS);
+      const [key] = await redis.keys('session:*');
+      expect(await redis.hget(key!, 'credentialFingerprint')).toBe(hashToken(stored.passwordHash!));
     });
 
     it('returns 401 once the user is closed', async () => {

@@ -6,11 +6,13 @@ export const LOGIN_EMAIL_LIMIT = 5;
 export const LOGIN_IP_LIMIT = 30;
 export const LOGIN_WINDOW_SEC = 900;
 export const RESET_EMAIL_LIMIT = 3;
+export const RESET_IP_LIMIT = 20;
 export const RESET_WINDOW_SEC = 3600;
 
 export const loginEmailKey = (email: string) => `throttle:login:email:${email.toLowerCase()}`;
 export const loginIpKey = (ip: string) => `throttle:login:ip:${ip}`;
 export const resetEmailKey = (email: string) => `throttle:reset:email:${email.toLowerCase()}`;
+export const resetIpKey = (ip: string) => `throttle:reset:ip:${ip}`;
 
 /** DECR only an existing positive counter: never below 0, never creates a key without a TTL. */
 const GIVE_BACK_SCRIPT = `

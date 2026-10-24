@@ -30,6 +30,11 @@ async function load(): Promise<void> {
   return loading;
 }
 
+/** Refetches the signed-in user, e.g. after they edited their own account (role, locale). */
+async function refresh(): Promise<void> {
+  setUser(await apiGet<CurrentUser>('/auth/me'));
+}
+
 async function login(email: string, password: string): Promise<void> {
   setUser(await apiPost<CurrentUser>('/auth/login', { email, password }));
 }
@@ -52,7 +57,16 @@ function clear(): void {
 const isAdmin = computed(() => user.value?.role === 'admin');
 
 export function useSession() {
-  return { user: readonly(user), loaded: readonly(loaded), isAdmin, load, login, logout, clear };
+  return {
+    user: readonly(user),
+    loaded: readonly(loaded),
+    isAdmin,
+    load,
+    refresh,
+    login,
+    logout,
+    clear,
+  };
 }
 
 /** Test helper: back to the state of a fresh page load. */

@@ -107,6 +107,18 @@ describe('useSession', () => {
     expect(s.isAdmin.value).toBe(true);
   });
 
+  it('refresh refetches the current user and applies the new locale', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce(user);
+    const s = useSession();
+    await s.load();
+    vi.mocked(apiGet).mockResolvedValueOnce({ ...user, role: 'admin', locale: 'hu-HU' });
+    await s.refresh();
+    expect(apiGet).toHaveBeenCalledTimes(2);
+    expect(apiGet).toHaveBeenLastCalledWith('/auth/me');
+    expect(s.user.value).toEqual({ ...user, role: 'admin', locale: 'hu-HU' });
+    expect(setLocaleFromTag).toHaveBeenLastCalledWith('hu-HU');
+  });
+
   it('shares state between callers', async () => {
     vi.mocked(apiPost).mockResolvedValue(user);
     await useSession().login('a@b.c', 'x');

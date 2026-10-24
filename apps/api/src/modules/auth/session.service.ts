@@ -9,6 +9,8 @@ import { hashToken, newToken } from './tokens';
 
 export interface SessionData {
   userId: string;
+  /** credentialFingerprint() of the password hash the session was created with. */
+  credentialFingerprint: string;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -42,15 +44,15 @@ export class SessionService {
     });
   }
 
-  async create(userId: string): Promise<string> {
+  async create(userId: string, credentialFingerprint: string): Promise<string> {
     const id = newToken();
     const hash = hashToken(id);
     const now = Date.now();
-    await this.pruneStale(userId);
     await this.redis
       .multi()
       .hset(sessionKey(hash), {
         userId,
+        credentialFingerprint,
         createdAt: String(now),
         lastSeenAt: String(now),
       })
@@ -65,8 +67,14 @@ export class SessionService {
     const hash = hashToken(id);
     const raw = await this.redis.hgetall(sessionKey(hash));
     if (!raw.userId) return null;
+    // Sessions created before credential binding have no fingerprint: treat them as invalid.
+    if (!raw.credentialFingerprint) {
+      await this.destroy(id);
+      return null;
+    }
     const data: SessionData = {
       userId: raw.userId,
+      credentialFingerprint: raw.credentialFingerprint,
       createdAt: Number(raw.createdAt),
       lastSeenAt: Number(raw.lastSeenAt),
     };
@@ -98,16 +106,5 @@ export class SessionService {
     for (const h of hashes) multi.del(sessionKey(h));
     multi.srem(userSessionsKey(userId), ...hashes);
     await multi.exec();
-  }
-
-  /** Removes set members whose session key has already expired. */
-  private async pruneStale(userId: string): Promise<void> {
-    const hashes = await this.redis.smembers(userSessionsKey(userId));
-    if (hashes.length === 0) return;
-    const pipeline = this.redis.pipeline();
-    for (const h of hashes) pipeline.exists(sessionKey(h));
-    const res = await pipeline.exec();
-    const stale = hashes.filter((_, i) => res?.[i]?.[1] === 0);
-    if (stale.length > 0) await this.redis.srem(userSessionsKey(userId), ...stale);
   }
 }

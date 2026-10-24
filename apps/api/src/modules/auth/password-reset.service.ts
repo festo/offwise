@@ -13,8 +13,10 @@ import { SessionService } from './session.service';
 import {
   loginEmailKey,
   RESET_EMAIL_LIMIT,
+  RESET_IP_LIMIT,
   RESET_WINDOW_SEC,
   resetEmailKey,
+  resetIpKey,
   ThrottleService,
 } from './throttle.service';
 import { ThrottledException } from './throttled.exception';
@@ -41,13 +43,15 @@ export class PasswordResetService {
   }
 
   /** Throttles, then does the work after the response so timing never reveals whether the email exists. */
-  async request(email: string): Promise<void> {
-    const { allowed, retryAfterSec } = await this.throttle.hit(
-      resetEmailKey(email),
-      RESET_EMAIL_LIMIT,
-      RESET_WINDOW_SEC,
-    );
-    if (!allowed) throw new ThrottledException(retryAfterSec);
+  async request(email: string, ip: string): Promise<void> {
+    // Count both atomically up front, so a concurrent burst cannot slip past either limit.
+    const [byEmail, byIp] = await Promise.all([
+      this.throttle.hit(resetEmailKey(email), RESET_EMAIL_LIMIT, RESET_WINDOW_SEC),
+      this.throttle.hit(resetIpKey(ip), RESET_IP_LIMIT, RESET_WINDOW_SEC),
+    ]);
+    if (!byEmail.allowed || !byIp.allowed) {
+      throw new ThrottledException(Math.max(byEmail.retryAfterSec, byIp.retryAfterSec, 1));
+    }
     setImmediate(() => {
       this.sendResetEmail(email).catch((error: unknown) => {
         this.logger.error(
@@ -71,13 +75,23 @@ export class PasswordResetService {
         action: 'auth.password_reset_completed',
         entityId: user.id,
       });
-      // Inside the transaction: if Redis fails, the password change rolls back, so the user never
-      // has a new password while old sessions or reset links still work.
-      await this.tokens.revokeAllForUser(user.id);
-      await this.sessions.destroyAllForUser(user.id);
     });
-    // The owner just proved control of the mailbox: lift a login lockout on the email.
-    await this.throttle.clear(loginEmailKey(user.email));
+    // After the commit and best-effort: the guard's fingerprint check already ends every old session
+    // now that the hash changed, and a leftover reset link only lets the mailbox owner reset again.
+    // Clearing the login throttle lifts a lockout, since the owner just proved control of the mailbox.
+    const cleanup = await Promise.allSettled([
+      this.tokens.revokeAllForUser(user.id),
+      this.sessions.destroyAllForUser(user.id),
+      this.throttle.clear(loginEmailKey(user.email)),
+    ]);
+    for (const result of cleanup) {
+      if (result.status === 'rejected') {
+        this.logger.error(
+          'Password reset cleanup failed',
+          result.reason instanceof Error ? result.reason.stack : String(result.reason),
+        );
+      }
+    }
   }
 
   private async sendResetEmail(email: string): Promise<void> {

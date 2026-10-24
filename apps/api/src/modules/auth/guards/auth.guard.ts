@@ -7,10 +7,13 @@ import { UserLookupService } from '../../users/user-lookup.service';
 import { type AuthenticatedRequest, IS_PUBLIC } from '../decorators';
 import { clearSessionCookieOptions, SESSION_COOKIE } from '../session-cookie';
 import { SessionService } from '../session.service';
+import { credentialFingerprint } from '../tokens';
 
 /**
  * Every route needs a valid session unless marked @Public(). The user is read from PostgreSQL
- * on every request (closed users excluded), so role changes and closures apply immediately.
+ * on every request (closed users excluded), so role changes and closures apply immediately. A
+ * session is valid only while the user's password hash matches the one it was created with, so a
+ * password change ends every session, even one stored by a login that raced the change.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -35,12 +38,18 @@ export class AuthGuard implements CanActivate {
     if (typeof sessionId === 'string' && sessionId !== '') {
       const session = await this.sessions.get(sessionId);
       const user = session ? await this.users.findActiveById(session.userId) : null;
-      if (user) {
+      if (
+        session &&
+        user?.passwordHash &&
+        session.credentialFingerprint === credentialFingerprint(user.passwordHash)
+      ) {
         const authed = req as AuthenticatedRequest;
         authed.user = user;
         authed.sessionId = sessionId;
         return true;
       }
+      // Created with credentials that are no longer current (e.g. a login that raced a reset).
+      if (session) await this.sessions.destroy(sessionId);
     }
 
     // A cookie was sent but is invalid, tampered with or expired: tell the browser to drop it.

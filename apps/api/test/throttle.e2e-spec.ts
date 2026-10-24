@@ -8,6 +8,7 @@ import {
   loginEmailKey,
   loginIpKey,
   resetEmailKey,
+  resetIpKey,
   ThrottleService,
 } from '../src/modules/auth/throttle.service';
 import { RedisModule } from '../src/redis/redis.module';
@@ -41,6 +42,7 @@ describe('ThrottleService (e2e)', () => {
   it('builds ip and reset keys', () => {
     expect(loginIpKey('10.0.0.1')).toBe('throttle:login:ip:10.0.0.1');
     expect(resetEmailKey('A@Example.com')).toBe('throttle:reset:email:a@example.com');
+    expect(resetIpKey('10.0.0.1')).toBe('throttle:reset:ip:10.0.0.1');
   });
 
   it('repairs a counter that has no TTL on the next hit', async () => {

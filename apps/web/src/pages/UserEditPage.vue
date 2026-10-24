@@ -44,11 +44,27 @@ async function load(): Promise<void> {
     state.value = e instanceof ApiError && e.status === 404 ? 'notFound' : 'error';
   }
 }
-watch(id, load, { immediate: true });
 
 const saving = ref(false);
 const saved = ref(false);
 const formErrors = ref<UserFormErrors | null>(null);
+
+const closeOpen = ref(false);
+const closing = ref(false);
+const closeError = ref<string | null>(null);
+
+// Messages belong to the user they were shown for; start clean when switching users.
+watch(
+  id,
+  () => {
+    saved.value = false;
+    formErrors.value = null;
+    closeOpen.value = false;
+    closeError.value = null;
+    void load();
+  },
+  { immediate: true },
+);
 
 const note = computed(() => {
   if (saved.value) return t('users.saved');
@@ -65,14 +81,23 @@ async function onSubmit(body: UpdateUserRequest): Promise<void> {
     saved.value = true;
   } catch (e) {
     formErrors.value = userFormErrors(e, t);
+    return;
   } finally {
     saving.value = false;
   }
+  if (id.value === session.user.value?.id) await refreshOwnSession();
 }
 
-const closeOpen = ref(false);
-const closing = ref(false);
-const closeError = ref<string | null>(null);
+/** After editing your own account, take role and locale from the API; leave if no longer admin. */
+async function refreshOwnSession(): Promise<void> {
+  try {
+    await session.refresh();
+  } catch {
+    // The save went through; a failed refresh only delays the new role/locale to the next load.
+    return;
+  }
+  if (!session.isAdmin.value) await router.replace({ name: 'home' });
+}
 
 function openClose(): void {
   closeError.value = null;
