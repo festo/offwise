@@ -6,7 +6,8 @@
   "workspaceFolder": "/workspaces/offwise",
   "remoteUser": "node",
   "features": {
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "forwardPorts": [5173, 3000, 6006, 8025],
   "portsAttributes": {
