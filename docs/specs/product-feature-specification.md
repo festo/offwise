@@ -26,7 +26,7 @@ Teams form a single tree, and every person belongs to exactly one team.
 - Every manager has a manager of their own, who approves the manager's leave. This follows the tree upwards. A configuration setting can instead allow managers to approve their own leave.
 - The person at the top of the tree can create and approve their own requests.
 - A manager can create leave on behalf of their team members, and approve or reject their requests.
-- A manager can override policies (minimum staffing, non-bookable days) when creating or approving leave. Every override is recorded in the audit log.
+- A manager can override policies (minimum staffing, blackout periods, non-bookable days, advance notice) when creating or approving leave. Every override is recorded in the audit log.
 
 **Roles**
 
@@ -68,7 +68,6 @@ Public holidays are managed through holiday groups instead of storing a person's
 - A holiday reduces the leave deducted only when it falls on one of the person's working days. Example: a person working 4 days books a week containing a holiday on one of those days, so 3 days are deducted.
 - Company-specific days off (for example, a company-wide closing day) are a holiday group like any other.
 - Holidays are kept per year inside a group, because national and religious holidays can change from year to year. Group assignments carry over every year, so teams and people never need to be re-assigned. An admin sets each year's dates, optionally copying the previous year as a starting point. Editing one year never changes past years, so history stays as it was.
-- Optional per group: a substitute day when a holiday falls on a non-working day, for countries that grant one.
 
 ## Leave types and balances
 
@@ -79,17 +78,16 @@ Leave types are fully configurable by an admin; the system ships with sensible d
 - Name and a color for the calendar. The name is entered once, in any language, and is not translated.
 - Whether it counts against a balance, or is unlimited.
 - Whether it needs approval, or is approved automatically.
-- Whether an attachment is required, for example a doctor's note, optionally only above a number of days.
 - Whether half days are allowed.
 - Whether the reason is private (see Calendar and visibility).
-- Which teams or people the type is available to.
+- Minimum advance notice, or none, counted in working days or calendar days (see Coverage rules).
+- Every leave type is available to everyone; it cannot be restricted to certain teams or people.
 - A type can be archived; past leave of that type stays in history and reports.
 
 **Allowances**
 
-- An annual allowance per leave type, set at company level and overridable per team and per person.
-- Accrual model per type: the full amount at the start of the leave year, or monthly accrual.
-- Optional extra days by tenure, for example +1 day after 5 years.
+- An annual allowance per leave type, set at company level and overridable per team and per person. Extra days, for example for tenure, are set through the per-person override (27 days instead of 25).
+- The full annual allowance is available from the first day of the leave year. There is no monthly accrual.
 - The leave year is configurable: calendar year or a custom start month.
 - Pro-rating for people who join or leave mid-year, and for part-time schedules. HR can override any pro-rated amount.
 
@@ -111,10 +109,10 @@ An employee requests leave, their manager approves or rejects it, and HR can act
 
 **Creating a request**
 
-- Pick a leave type, a start and end date, and optionally a comment and attachments.
+- Pick a leave type, a start and end date, and optionally a comment.
 - For half days, choose morning or afternoon. A half day can be placed directly before or after a full-day leave or holiday.
 - Before submitting, the request shows how many days will be deducted, after removing non-working days and holidays, and the balance remaining afterwards.
-- Requests that break a rule are blocked with a clear reason: insufficient balance, a non-bookable day, a blackout period, or minimum staffing.
+- Requests that break a rule are blocked with a clear reason: insufficient balance, a non-bookable day, a blackout period, minimum staffing, or too little advance notice.
 - Managers and HR can create leave on behalf of someone else, and can override blocking rules. Overrides are recorded.
 
 **Statuses**
@@ -140,7 +138,7 @@ Approved leave can still be shortened, extended or converted to another type by 
 
 - The default approver is the requester's team manager. A manager's own leave goes to their manager.
 - HR can approve or reject any request.
-- Optional multi-level approval for selected leave types or long absences (for example, manager then HR).
+- Each request has a single approver. There is no multi-level approval; HR can step in on any request instead.
 - A request always goes to the manager; the employee does not choose an approver. If the manager is away, the request stays pending and the manager approves it on return, even if the leave has already started.
 - Reminders are sent to approvers about requests still pending after a configurable time.
 
@@ -153,7 +151,7 @@ Approved leave can still be shortened, extended or converted to another type by 
 
 ## Coverage rules
 
-Three rules protect availability. Each blocks an employee's request, and a manager or HR can override it.
+Four rules protect availability and planning. Each blocks an employee's request, and a manager or HR can override it.
 
 **Minimum staffing**
 
@@ -171,6 +169,16 @@ Three rules protect availability. Each blocks an employee's request, and a manag
 
 - Single days that cannot be booked as leave, for example a company event.
 - Hard block for employees; a manager or HR can still create a leave record on that day.
+
+**Advance notice**
+
+- Each leave type can require a minimum number of days' notice, for example "vacation must be requested at least 3 days ahead". By default a type requires none, and sick leave usually stays that way.
+- Each leave type sets whether notice is counted in working days or calendar days. Working days is the default.
+- The first day of leave must be at least that many days after "today" in the requester's time zone.
+- Working days are the requester's own: days in their working schedule, minus their holidays. Example: with 3 working days' notice on a Monday-to-Friday schedule, a request made on a Monday can start on Thursday at the earliest, and one made on a Friday can start on Wednesday at the earliest.
+- Calendar days count every day, including weekends and holidays. Example: with 3 calendar days' notice, a request made on a Friday can start on Monday at the earliest.
+- A request with too little notice is blocked for the employee.
+- A manager or HR can still create or approve the leave, overriding the rule.
 
 ## Calendar and visibility
 
@@ -192,7 +200,7 @@ A company-wide monthly board shows who is away, and privacy settings control how
 **Privacy**
 
 - Colleagues see that a person is away, but not the leave type or reason, when the type is marked private (for example sick or parental leave).
-- The requester, their approvers, HR and auditors always see full details.
+- The requester, their approver, HR and auditors always see full details.
 - Configurable visibility of the board: the whole company, own team only, or own leave only.
 
 **Calendar feeds**
@@ -220,7 +228,6 @@ Every event can be delivered by email, Slack and webhook; users choose which eve
 
 - **Email** for all events.
 - **Slack**: direct messages for personal events, and a configurable team or company channel for approved leave.
-- **Slack status**: set a person's status to out of office while they are on leave.
 - **Daily or weekly digest** ("who's out today / this week") to a Slack channel or by email, per team or company-wide.
 - **Webhooks**: an admin registers URLs and picks the events each one receives.
 
@@ -235,7 +242,7 @@ HR and admins configure the system, manage users and pull data for payroll; audi
 **Configuration**
 
 - Company settings: name, default language, leave year start, default working schedule.
-- Leave types, allowances, carry-over and accrual rules.
+- Leave types, allowances, carry-over and advance notice rules.
 - Holiday groups, blackout periods and non-bookable days.
 - Team tree, managers and minimum staffing per team.
 - Notification channels and webhooks.
@@ -250,7 +257,6 @@ HR and admins configure the system, manage users and pull data for payroll; audi
 
 - Leave taken per person, team and leave type over any period.
 - Remaining balances for everyone, at any date.
-- Absence trends over time per team or type.
 - Leave of a given type in a period, for example last month's unpaid leave for payroll.
 - Export of every report to CSV and Excel.
 
@@ -306,6 +312,7 @@ These scenarios define the expected behavior and serve as acceptance checks.
 | 7 | An employee leaves with 4 days unused. | The remaining balance is shown at the end date; the account is closed and soft-deleted, and stays available in reports. |
 | 8 | A vacation runs from December 28 to January 5. | Days before January 1 come from the old year's allowance, the rest from the new year's. |
 | 9 | A team manager wants a week off. | The request goes to the manager's own manager; at the top of the tree, the person approves it themselves. |
+| 10 | Vacation requires 3 working days' notice. On a Friday, an employee on a Monday-to-Friday schedule requests vacation starting the following Tuesday. | Only 2 working days of notice are given (Monday and Tuesday), so the request is blocked for the employee; a manager or HR can add it, overriding the rule. |
 
 ## Out of scope
 
@@ -317,3 +324,11 @@ These scenarios define the expected behavior and serve as acceptance checks.
 - A person belonging to more than one team.
 - Negative leave balances; a balance can never go below zero.
 - Delegate approvers, and choosing an approver when submitting a request.
+- Multi-level approval (for example, manager then HR). Each request has one approver, and HR can act on any request.
+- Extra allowance days by tenure. HR sets them through the per-person allowance override.
+- Monthly accrual. The full allowance is available from the start of the leave year.
+- Substitute days when a holiday falls on a non-working day. HR can add a day to the holiday group by hand.
+- Attachments on leave requests, for now. If they are added later, they will be optional on any request, with no rule requiring one; checking them is left to HR.
+- Restricting a leave type to certain teams or people.
+- An absence trends report. The raw report exports to CSV and Excel cover it.
+- Setting a person's Slack status to out of office. It needs each user to connect their own Slack account, a separate integration from posting to a channel.

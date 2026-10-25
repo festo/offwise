@@ -125,17 +125,17 @@ Every module is a complete vertical slice: API, web UI including admin screens, 
 | 3 | Access control | Roles (Employee, Manager, HR/Admin, Auditor) mapped to permissions with scopes (own, managed subtree, company); Auditor read-only; replaces the temporary guards from module 1; route and menu guards in the web app | 2 |
 | 4 | Company settings & localization | Admin company settings screen; user locale and time zone preferences; date formats by locale; "today" in the user's time zone; first day of week; a second UI language to prove i18n end to end | 3 |
 | 5 | Working schedules | Effective-dated schedules at company, team and user level; "most specific wins" resolver; past leave never recalculated; `schedules.default` step | 2, 4 |
-| 6 | Holiday groups | Groups with per-year dated holidays (full or half day); copy previous year; assignment to teams and users with effective dates; combined holidays across groups; optional substitute days | 2 |
-| 7 | Leave types & allowances | Type configuration (name, color, balance or unlimited, approval required, half days, private reason, availability to teams and people); archiving; annual allowances at company, team and person level; `leave-types.defaults` step | 3 |
+| 6 | Holiday groups | Groups with per-year dated holidays (full or half day); copy previous year; assignment to teams and users with effective dates; combined holidays across groups | 2 |
+| 7 | Leave types & allowances | Type configuration (name, color, balance or unlimited, approval required, half days, private reason, advance notice in working or calendar days); archiving; annual allowances at company, team and person level; `leave-types.defaults` step | 3 |
 | 8 | Leave requests & approval | Day-count engine (schedule, holidays, half days; reference case #1); request form showing the deduction and resulting balance; statuses and transitions; approval chain and self-approval setting; HR acts on any request (#2, #9); creating leave on someone's behalf; shorten, extend, edit and cancel rules (#3); simple balance check (allowance minus used) | 5, 6, 7 |
-| 9 | Balances & accrual | Upfront and monthly accrual; pro-rating for joiners, leavers and part-time, with HR override (#4); tenure bonus; carry-over with maximum and expiry, carried-over days used first; manual adjustments with comment; leave spanning two leave years (#8); full balance breakdown | 8 |
-| 10 | Coverage rules | Minimum staffing; blackout periods (company or team, optionally per type); non-bookable days; manager and HR overrides recorded in the audit log (#5) | 8 |
+| 9 | Balances | Full allowance at the start of the leave year; pro-rating for joiners, leavers and part-time, with HR override (#4); carry-over with maximum and expiry, carried-over days used first; manual adjustments with comment; leave spanning two leave years (#8); full balance breakdown | 8 |
+| 10 | Coverage rules | Minimum staffing; blackout periods (company or team, optionally per type); non-bookable days; advance notice per leave type (#10); manager and HR overrides recorded in the audit log (#5) | 8 |
 | — | **Usable MVP** | | |
 | 11 | Board, dashboard & privacy | Company monthly board with team, person and type filters; pending vs. approved leave; blackouts and non-bookable days shown; personal and manager dashboards; private leave types; `visibility` setting | 8, 10 |
 | 12 | Email notifications | Internal event bus; every event in the feature spec; per-user email preferences; emails in the recipient's language; pending-request reminders | 8 |
-| 13 | Slack & webhooks | Slack direct messages, channel posts and out-of-office status; daily and weekly digests by Slack or email; webhooks with per-URL event selection | 12 |
+| 13 | Slack & webhooks | Slack direct messages and channel posts; daily and weekly digests by Slack or email; webhooks with per-URL event selection | 12 |
 | 14 | Calendar feeds | iCal feeds per person, team and company, respecting privacy | 11 |
-| 15 | Reports & export | Leave taken, balances at any date, absence trends, leave by type and period (#6); CSV and Excel export; audit log search and export | 9 |
+| 15 | Reports & export | Leave taken, balances at any date, leave by type and period (#6); CSV and Excel export; audit log search and export | 9 |
 | 16 | Year-end close | Preview, then run manually or on a set date; applies carry-over and opens the new year | 9 |
 | 17 | Employee lifecycle | Start and end dates; leaver handling: pro-rating, balance at end date, future leave cancelled, account closed and soft-deleted (#7); CSV bulk import of users and opening balances | 9 |
 | 18 | SSO (OIDC) | Admin-configured OIDC provider; first SSO sign-in creates an account waiting for HR approval; password and SSO on/off switches; `AUTH_FORCE_PASSWORD_LOGIN` | 3 |
@@ -154,7 +154,7 @@ Notes:
 
 Not part of the roadmap; to be specified when prioritized:
 
-- **Attachments on leave requests**, including the leave type setting "attachment required, optionally only above a number of days". This will add storage configuration to env (driver, local path or S3 credentials).
+- **Attachments on leave requests**, optional on any request; no leave type setting requires one. This will add storage configuration to env (driver, local path or S3 credentials).
 
 ## Decisions
 
