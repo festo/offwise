@@ -2,7 +2,7 @@
   "name": "offwise",
   "dockerComposeFile": ["../docker-compose.yml", "compose.yml"],
   "service": "workspace",
-  "runServices": ["db", "mailpit", "workspace"],
+  "runServices": ["db", "redis", "mailpit", "workspace"],
   "workspaceFolder": "/workspaces/offwise",
   "remoteUser": "node",
   "features": {

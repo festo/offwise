@@ -7,6 +7,8 @@ import type { HealthState } from '../types';
 const props = defineProps<{ state: HealthState }>();
 const { t } = useI18n();
 
+// The badge gets `transition-none`: Badge's `transition-all` would cross-fade the light
+// secondary and dark primary colours on a state change, passing through grey on grey.
 const variant = computed(() => {
   if (props.state === 'ok') return 'default';
   if (props.state === 'error') return 'destructive';
@@ -15,7 +17,7 @@ const variant = computed(() => {
 </script>
 
 <template>
-  <Badge :variant="variant" role="status" aria-live="polite">
+  <Badge :variant="variant" class="transition-none" role="status" aria-live="polite">
     {{ t(`system.apiStatus.${state}`) }}
   </Badge>
 </template>

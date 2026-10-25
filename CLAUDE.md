@@ -29,7 +29,7 @@ pnpm -r typecheck                  # typecheck everything
 pnpm -r test                       # unit tests everywhere
 pnpm -r format                     # prettier
 pnpm --filter @offwise/web storybook   # component review
-pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres: devcontainer or docker compose up -d db)
+pnpm --filter @offwise/api test:e2e    # API e2e (needs postgres + redis: devcontainer or docker compose up -d db redis mailpit)
 ```
 
 Scaffolding must define `lint`, `typecheck`, `test` and `format` in every workspace; `test:e2e`, `migration:generate` and `migration:run` in api; and `storybook` and `build-storybook` in web. It must also define a compose service named `db`, because the agents depend on these names.
@@ -61,4 +61,5 @@ These paths override the Superpowers defaults: specs go in `docs/specs/` and pla
 - Decisions that change the stack or architecture get an ADR in `docs/decisions/`.
 - Don't claim something works without running the relevant lint, typecheck, and tests and reading their output.
 - Leave domain logic (balances, accrual, approvals, holidays) in the API; the web app displays and submits, it does not compute entitlements.
+- Build for small companies, not high load. offwise serves relatively small companies, not thousands of requests per second. Don't add caches (process-wide or cross-request), replicas-aware invalidation, or other high-load engineering at this stage; a plain database read is fine. Caching for the length of a single request is acceptable when one request repeats the same lookup.
 - Personal Claude settings go in `.claude/settings.local.json` (gitignored), not `.claude/settings.json`.

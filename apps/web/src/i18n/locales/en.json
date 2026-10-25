@@ -8,6 +8,131 @@
       "loading": "Checking API…",
       "ok": "API connected",
       "error": "API unavailable"
+    },
+    "sessionError": {
+      "message": "We could not reach the server. Check your connection and try again.",
+      "retry": "Retry",
+      "retrying": "Retrying…"
     }
+  },
+  "pages": {
+    "login": "Sign in",
+    "forgotPassword": "Forgot password",
+    "resetPassword": "Set a new password",
+    "users": "Users",
+    "userNew": "New user",
+    "userEdit": "Edit user",
+    "home": "Home",
+    "sessionError": "offwise is not available right now"
+  },
+  "layout": {
+    "navLabel": "Main navigation",
+    "home": "Home",
+    "users": "Users",
+    "toggleNav": "Toggle navigation",
+    "navTitle": "Navigation",
+    "navDescription": "Links to the pages of offwise."
+  },
+  "userMenu": {
+    "trigger": "Account menu for {name}",
+    "signOut": "Sign out"
+  },
+  "auth": {
+    "email": "Email",
+    "password": "Password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "signIn": "Sign in",
+    "signingIn": "Signing in…",
+    "loginDescription": "Use your work email and password.",
+    "forgotLink": "Forgot your password?",
+    "invalidCredentials": "Invalid email or password.",
+    "tooManyAttempts": "Too many attempts. Try again later.",
+    "tooManyAttemptsAfter": "Too many attempts. Try again in {n} minute. | Too many attempts. Try again in {n} minutes.",
+    "genericError": "Something went wrong. Try again.",
+    "resetDone": "Your password has been changed. Sign in with your new password.",
+    "forgotDescription": "Enter your email and we will send you a link to set a new password.",
+    "sendLink": "Send reset link",
+    "sending": "Sending…",
+    "sent": "If an account exists for that email, a reset link is on its way. The link works for one hour.",
+    "backToSignIn": "Back to sign in",
+    "resetDescription": "Choose a new password of 12 to 128 characters.",
+    "setPassword": "Set password",
+    "saving": "Saving…",
+    "passwordLength": "Password must be 12 to 128 characters.",
+    "passwordMismatch": "The passwords do not match.",
+    "resetInvalid": "This reset link is invalid or has expired.",
+    "resetRejected": "This link is invalid or has expired, or the password is not acceptable.",
+    "requestNewLink": "Request a new link",
+    "emailRequired": "Enter your email."
+  },
+  "home": {
+    "welcome": "Welcome, {name}"
+  },
+  "users": {
+    "search": "Search users",
+    "searchPlaceholder": "Name or email",
+    "showClosed": "Show closed",
+    "addUser": "Add user",
+    "backToList": "Back to users",
+    "columns": {
+      "name": "Name",
+      "email": "Email",
+      "role": "Role",
+      "status": "Status"
+    },
+    "roles": {
+      "employee": "Employee",
+      "manager": "Manager",
+      "admin": "Admin",
+      "auditor": "Auditor"
+    },
+    "closed": "Closed",
+    "passwordNotSet": "Password not set",
+    "empty": "No users found.",
+    "loading": "Loading users…",
+    "pageOf": "Page {page} of {pages}",
+    "previous": "Previous",
+    "next": "Next",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
+    "loadError": "Could not load users. Try again.",
+    "loadUserError": "Could not load this user. Try again.",
+    "notFound": "This user does not exist.",
+    "retry": "Try again",
+    "created": "User created. They can set a password with the “Forgot your password?” link.",
+    "saved": "Changes saved.",
+    "closedNote": "This account is closed.",
+    "form": {
+      "name": "Name",
+      "email": "Email",
+      "role": "Role",
+      "locale": "Locale",
+      "localeHint": "A language tag such as en-GB. Leave empty for the company default.",
+      "timeZone": "Time zone",
+      "timeZoneHint": "For example Europe/London. Leave empty for the company default.",
+      "create": "Create user",
+      "creating": "Creating…",
+      "save": "Save changes",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "nameRequired": "Enter a name.",
+      "emailRequired": "Enter an email.",
+      "emailTaken": "Another user already has this email.",
+      "lastAdmin": "This change would leave no active admin. Make another user an admin first.",
+      "invalid": "Check the highlighted fields.",
+      "noChanges": "Nothing to save.",
+      "rejected": "Some values were not accepted. Check the email, locale and time zone."
+    },
+    "close": {
+      "button": "Close account",
+      "title": "Close {name}'s account?",
+      "description": "They will be signed out everywhere and can no longer sign in. A closed account cannot be reopened.",
+      "confirm": "Close account",
+      "closing": "Closing…",
+      "cancel": "Cancel",
+      "lastAdmin": "This is the last active admin. Make another user an admin first."
+    },
+    "pagination": "Pagination"
   }
 }

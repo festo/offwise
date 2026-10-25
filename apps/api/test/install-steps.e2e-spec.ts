@@ -93,11 +93,18 @@ describe('InstallStepRunner (e2e)', () => {
     expect(results.flat()).toEqual(['test.slow']);
   });
 
-  it('the install command exits 0 and is idempotent against the test database', () => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = runApiCli('ts-node', ['src/install.ts']);
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain('No pending install steps.');
-    }
+  it('the install command applies company.defaults once and is idempotent against the test database', async () => {
+    const first = runApiCli('ts-node', ['src/install.ts']);
+    expect(first.status, first.stderr).toBe(0);
+    expect(first.stdout).toContain('Applied install steps: company.defaults');
+    expect(first.stdout).toContain('Initial admin: skipped-not-configured');
+    const rows = await dataSource.query<{ value: unknown }[]>(
+      `SELECT value FROM settings WHERE namespace = 'company'`,
+    );
+    expect(rows).toEqual([{ value: { name: 'offwise', locale: 'en-GB' } }]);
+
+    const second = runApiCli('ts-node', ['src/install.ts']);
+    expect(second.status, second.stderr).toBe(0);
+    expect(second.stdout).toContain('No pending install steps.');
   }, 60_000);
 });

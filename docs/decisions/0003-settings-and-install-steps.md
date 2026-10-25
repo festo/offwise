@@ -1,14 +1,15 @@
 # 0003: Namespaced DB settings and once-per-installation install steps
 
-**Status:** Accepted; when install steps run is superseded by 0006
+**Status:** Accepted
 **Date:** 2026-10-13
+**Updated:** 2026-10-14
 
 ## Context
 Admins configure many company-wide options in the UI, and modules ship one at a time, each adding settings and default data (root team, default schedule, default leave types). Defaults must be seeded once and never recreated after an admin edits or deletes them, including on installations that upgrade to a new module.
 
 ## Decision
 - **Settings:** a `settings` table with one `jsonb` row per namespace (`company`, `auth`, ...). The owning module defines a validated DTO and code defaults; a missing row means defaults. Secret fields are encrypted with `ENCRYPTION_KEY` and never returned by the API. Every write is audited.
-- **Install steps:** modules register named steps; an `install_steps` table records applied steps. After migrations, the API runs each unrecorded step once, in its own transaction with its record row.
+- **Install steps:** modules register named steps; an `install_steps` table records applied steps. The install command (ADR 0006) runs each unrecorded step once, in its own transaction with its record row. The API itself never runs them.
 - Infrastructure and secrets needed before any admin exists stay in environment variables.
 
 See `docs/specs/2026-10-13-configuration-and-modules-design.md`.
